@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <header class="head">
+    <span class="head-icon">🔖</span>
+    <span class="head-title">Link Saver</span>
+    <a id="open-web" class="head-link" href="#" target="_blank" rel="noopener noreferrer">打开 Web 端</a>
+  </header>
+
+  <!-- 已登录 -->
+  <section id="logged-in" class="hidden">
+    <p class="status">已登录：<strong id="user-email"></strong></p>
+    <button id="btn-save" class="btn-primary">保存当前页面</button>
+    <button id="btn-logout" class="btn-ghost">退出登录</button>
+  </section>
+
+  <!-- 未登录 -->
+  <section id="logged-out" class="hidden">
+    <div class="form-row">
+      <label for="email">邮箱</label>
+      <input id="email" type="email" placeholder="you@example.com" autocomplete="email" />
+    </div>
+    <div class="form-row hidden" id="code-row">
+      <label for="code">验证码</label>
+      <input id="code" type="text" inputmode="numeric" maxlength="6" placeholder="6 位数字" autocomplete="one-time-code" />
+    </div>
+    <div id="msg" class="msg"></div>
+    <button id="btn-login" class="btn-primary">发送验证码</button>
+  </section>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

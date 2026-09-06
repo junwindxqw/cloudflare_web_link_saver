@@ -1,0 +1,31 @@
+// Cloudflare Worker 配置
+// 部署前请将 database_id / kv id 替换为 `wrangler d1 create` / `wrangler kv namespace create` 输出的真实 ID。
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "link-saver",
+  "main": "src/index.ts",
+  "compatibility_date": "2025-08-01",
+  "assets": {
+    "directory": "./public"
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "link-saver-db",
+      "database_id": "00000000-0000-0000-0000-000000000000"
+    }
+  ],
+  "kv_namespaces": [
+    {
+      "binding": "KV",
+      "id": "00000000000000000000000000000000"
+    }
+  ],
+  "vars": {
+    "WEB_ORIGIN": "https://link-saver.junwind.site",
+    "MAIL_FROM": "Link Saver <noreply@junwind.site>"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

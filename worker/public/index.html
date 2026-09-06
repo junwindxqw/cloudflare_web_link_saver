@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Link Saver · 收藏夹</title>
+  <meta name="description" content="Link Saver —— 你的网页收藏服务" />
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='10' fill='%232563eb'/%3E%3Cpath d='M16 10h16v28l-8-7-8 7z' fill='%23fff'/%3E%3C/svg%3E" />
+  <link rel="stylesheet" href="/app.css" />
+</head>
+<body>
+  <!-- 登录视图 -->
+  <div id="login-view" class="login-view hidden">
+    <div class="login-card">
+      <div class="brand">
+        <span class="brand-icon">🔖</span>
+        <h1>Link Saver</h1>
+        <p class="brand-sub">登录后查看你的全部收藏</p>
+      </div>
+
+      <div id="login-status" class="login-status" role="alert"></div>
+
+      <div class="form-row">
+        <label for="login-email">邮箱</label>
+        <input id="login-email" type="email" placeholder="you@example.com" autocomplete="email" />
+      </div>
+      <div class="form-row code-row hidden" id="code-row">
+        <label for="login-code">验证码</label>
+        <div class="code-input">
+          <input id="login-code" type="text" inputmode="numeric" maxlength="6" placeholder="6 位数字验证码" autocomplete="one-time-code" />
+          <button id="btn-resend" type="button" class="btn-link">重新发送</button>
+        </div>
+      </div>
+
+      <button id="btn-main" type="button" class="btn-primary">发送验证码</button>
+
+      <p class="login-hint">已安装 Link Saver 插件并登录？打开本页面会自动登录。</p>
+    </div>
+  </div>
+
+  <!-- 应用视图 -->
+  <div id="app-view" class="app-view hidden">
+    <header class="topbar">
+      <div class="topbar-inner">
+        <div class="logo"><span class="logo-icon">🔖</span><span class="logo-text">Link Saver</span></div>
+        <div class="topbar-right">
+          <span id="user-email" class="user-email"></span>
+          <button id="btn-logout" class="btn-ghost">退出</button>
+        </div>
+      </div>
+    </header>
+
+    <div class="layout">
+      <aside class="sidebar" id="sidebar">
+        <section class="side-section">
+          <h2>网站分类</h2>
+          <div id="site-cats" class="side-list"></div>
+        </section>
+        <section class="side-section">
+          <h2>文章归档</h2>
+          <div id="month-list" class="side-list"></div>
+        </section>
+      </aside>
+
+      <main class="content">
+        <div class="toolbar">
+          <div class="chips" id="type-chips">
+            <button class="chip active" data-type="all">全部</button>
+            <button class="chip" data-type="site">网站</button>
+            <button class="chip" data-type="article">文章</button>
+          </div>
+          <div class="search">
+            <input id="search-input" type="search" placeholder="搜索标题或网址…" />
+          </div>
+        </div>
+
+        <div id="active-filters" class="active-filters"></div>
+
+        <div id="list" class="list"></div>
+        <div id="list-empty" class="empty hidden"></div>
+        <div class="load-more-row">
+          <button id="btn-more" class="btn-more hidden">加载更多</button>
+        </div>
+      </main>
+    </div>
+  </div>
+
+  <div id="toast" class="toast hidden"></div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

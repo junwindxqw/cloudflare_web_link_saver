@@ -1,0 +1,129 @@
+# Link Saver
+
+一个托管在 Cloudflare 免费服务上的网页收藏系统：Chrome 扩展一键收藏 + 响应式 Web 收藏夹 + 邮箱验证码登录。
+
+## 功能
+
+- **Chrome 扩展（MV3）**
+  - 右键菜单 **Send to Link Saver**：保存当前页面 / 右键链接
+  - 右键菜单 **Open Link Saver Web**：一键打开 Web 收藏夹（自动登录）
+  - 工具栏弹窗：邮箱验证码登录、保存当前页面、打开 Web 端
+  - 保存结果通过图标角标（✓ / !）与系统通知反馈
+- **自动分类**
+  - 纯域名（如 `https://github.com/`）→ 存为 **网站**，自动以域名创建分类
+  - 其它页面（文章等）→ 存为 **文章**，归入「文章」分类，并自动补全所属站点的网站记录（含域名）
+  - 文章按月份归档；保存时先入库兜底标题，服务端随后在后台抓取页面 `<title>` 自动回填（不阻塞保存请求）
+  - 保存时自动剥离链接中的锚点与常见追踪参数（`utm_*`、`fbclid` 等），同一文章不会因入口不同存成多条
+- **Web 端（响应式，PC / 手机）**
+  - 网站分类侧栏 + 文章月份归档 + 类型筛选 + 搜索 + 加载更多
+  - 支持删除收藏、点击文章条目里的域名跳转到该网站分类
+- **登录与凭证打通**
+  - 邮箱 + 6 位验证码登录（Resend 发信），JWT 有效期 30 天
+  - 扩展已登录时，打开 Web 页面通过 `externally_connectable` 消息桥自动换取凭证，**免登录**
+  - 未装扩展 / 未登录时，Web 端独立使用邮箱验证码登录
+
+## 目录结构
+
+```
+├── worker/                 # Cloudflare Worker（API + 静态资源）
+│   ├── src/                #   Hono 后端源码（auth / links / sso / email / url）
+│   ├── public/             #   Web 前端（index.html / app.js / app.css）
+│   ├── schema.sql          #   D1 数据库结构
+│   └── wrangler.jsonc      #   Worker 配置
+├── extension/              # Chrome 扩展（MV3）
+│   ├── manifest.json       #   含固定 key（决定扩展 ID，勿随意更换）
+│   ├── background.js       #   右键菜单 / 保存 / SSO 消息桥
+│   └── popup.*             #   工具栏弹窗
+└── scripts/                # 辅助脚本（图标生成 / 本地 e2e 测试）
+```
+
+## 技术栈与免费额度
+
+| 组件 | 服务 | 免费额度 |
+|---|---|---|
+| API + Web 托管 | Cloudflare **Workers**（含静态资源） | 10 万请求/天 |
+| 数据库 | Cloudflare **D1**（SQLite） | 5 GB 存储 / 500 万行读/天 |
+| 一次性令牌 / 验证码 | Cloudflare **KV** | 10 万读/天 |
+| 邮件 | **Resend**（免费档 3000 封/月），发件域名 `junwind.site` |
+
+## 首次部署
+
+前置条件：Node 18+，已 `wrangler login`，Resend 中 `junwind.site` 域名已验证。
+
+### 1. 创建资源并回填 ID
+
+```bash
+cd worker
+npm install
+
+npx wrangler d1 create link-saver-db
+# → 复制输出的 database_id，填入 worker/wrangler.jsonc
+
+npx wrangler kv namespace create KV
+# → 复制输出的 id，填入 worker/wrangler.jsonc
+
+npm run db:init:remote        # 初始化远端 D1 表结构
+```
+
+### 2. 配置密钥
+
+```bash
+npx wrangler secret put JWT_SECRET      # 随机长字符串，如 openssl rand -hex 32
+npx wrangler secret put RESEND_API_KEY  # Resend 后台创建的 API Key（re_ 开头）
+```
+
+`MAIL_FROM` 默认为 `Link Saver <noreply@junwind.site>`，可在 `wrangler.jsonc` 的 `vars` 中修改。
+
+### 3. 绑定域名
+
+```bash
+npx wrangler deploy
+```
+
+部署后到 Cloudflare 控制台：**Workers & Pages → link-saver → Settings → Domains & Routes → Add → Custom domain**，添加 `link-saver.junwind.site`（域名托管在 Cloudflare，DNS 会自动配置）。API 与 Web 页面同域，无需额外跨域配置。
+
+### 4. 安装扩展
+
+1. 打开 `chrome://extensions`，开启右上角「开发者模式」
+2. 「加载已解压的扩展程序」→ 选择 `extension/` 目录
+3. 点击工具栏 Link Saver 图标，用邮箱验证码登录
+
+扩展 ID 固定为 `ojokkllejggilcghafadekmldpgcmphd`（由 `manifest.json` 的 `key` 决定；`worker/public/app.js` 中的 `EXTENSION_ID` 与之一致）。**不要更换 manifest 的 key**，否则 Web 端自动登录会失效。
+
+## 日常开发
+
+```bash
+cd worker
+npm run dev                # http://localhost:8787（本地 D1/KV 自动模拟）
+
+npm run typecheck          # TypeScript 类型检查
+node scripts/e2e-local.cjs # 本地接口 e2e 测试（需先 npm run dev；
+                           # 测试用 JWT 由 scripts 内置逻辑签发，密钥取 .dev.vars）
+node scripts/security-proof.cjs  # 运行时安全实证：SQL 注入载荷惰性 + CORS 白名单回显
+```
+
+本地开发扩展：把 `extension/config.js` 与 `manifest.json` 中的
+`https://link-saver.junwind.site` 改为 `http://localhost:8787`（并在 `host_permissions`、`externally_connectable` 中同步加入），改回时注意还原。
+
+## API 一览
+
+| 方法 | 路径 | 说明 |
+|---|---|---|
+| POST | `/api/auth/request-code` | 发送登录验证码（60s 冷却，单 IP 每日 20 封上限） |
+| POST | `/api/auth/verify` | 验证码换 JWT（5 次尝试上限） |
+| GET | `/api/auth/me` | 当前用户与统计 |
+| POST | `/api/links` | 保存网址，服务端自动分类（重复保存则刷新时间与标题） |
+| GET | `/api/links` | 列表，支持 `type` / `category` / `month` / `q` / `limit` / `offset` |
+| GET | `/api/links/overview` | 网站分类 + 月份归档 + 各类型计数 |
+| DELETE | `/api/links/:id` | 删除收藏 |
+| POST | `/api/sso/ott` | 已登录扩展签发一次性令牌（120s、单次有效） |
+| POST | `/api/sso/exchange` | 一次性令牌换正式 JWT（Web 自动登录用） |
+| GET | `/api/health` | 健康检查 |
+
+所有保存的 URL 强制校验 `http/https` 协议并拒绝内网/保留地址（SSRF 防护）；服务端抓取标题时逐跳重新校验重定向目标。
+
+## 常见问题
+
+- **邮件进垃圾箱**：确认 Resend 中域名 DKIM/SPF 已验证；也可把 `MAIL_FROM` 换成其它已验证的子域。
+- **Web 页面没有自动登录**：确认扩展已加载且已登录；扩展 ID 与 `app.js` 的 `EXTENSION_ID` 一致；`externally_connectable` 中包含 Web 域名。自动登录失败时页面会降级为邮箱验证码登录。
+- **免费额度**：Workers 免费档 10 万请求/天、D1/KV 额度见上表，个人使用完全够用；Resend 免费档每月 3000 封验证码邮件。
