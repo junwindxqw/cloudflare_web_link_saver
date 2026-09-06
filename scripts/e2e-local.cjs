@@ -1,6 +1,9 @@
 // 本地端到端测试：签发测试 JWT 后依次调用核心接口
+// E2E_LOGIN=api 时改走注册接口获取真实凭证（配合 E2E_KV=remote 可全量回归生产环境）
 const BASE = process.env.E2E_BASE || 'http://127.0.0.1:8787';
 const SECRET = 'local-e2e-secret';
+const { execSync } = require('child_process');
+const path = require('path');
 
 function b64url(input) {
   return Buffer.from(input).toString('base64url');
@@ -11,6 +14,28 @@ function signJwt(payload) {
   const body = b64url(JSON.stringify(payload));
   const sig = require('crypto').createHmac('sha256', SECRET).update(`${head}.${body}`).digest('base64url');
   return `${head}.${body}.${sig}`;
+}
+
+const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+const KV_NS = 'c9a2e5f1d5b1423c91f8a3a05e24e84e';
+const kvScope = process.env.E2E_KV === 'remote' ? `--namespace-id ${KV_NS} --remote` : '--binding KV --local';
+function readLocalCode(purpose, email, tries = 12) {
+  const key = `code:${purpose}:${email}`;
+  let lastErr = '';
+  for (let i = 0; i < tries; i++) {
+    try {
+      const raw = execSync(`npx wrangler kv key get "${key}" ${kvScope}`, {
+        cwd: path.join(__dirname, '..', 'worker'),
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+      return JSON.parse(raw.replace(/\x1b\[[0-9;]*m/g, '').trim().split('\n').pop()).code;
+    } catch (e) {
+      lastErr = String(e.stderr || e.message).slice(0, 100);
+      sleepSync(800);
+    }
+  }
+  throw new Error(`未能读取验证码 ${key}: ${lastErr}`);
 }
 
 let failed = 0;
@@ -34,10 +59,24 @@ async function req(method, path, { body, token } = {}) {
   const anon = await req('GET', '/api/links');
   check('未登录访问列表返回 401', anon.status === 401, JSON.stringify(anon));
 
-  const token = signJwt({ sub: '1', email: 'tester@junwind.site', iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 3600 });
+  let token;
+  let mainEmail;
+  if (process.env.E2E_LOGIN === 'api') {
+    // 生产模式：走真实注册接口获取凭证
+    mainEmail = `e2e-main-${Date.now()}@test.local`;
+    await req('POST', '/api/auth/register/request-code', { body: { email: mainEmail } });
+    const mainCode = readLocalCode('register', mainEmail);
+    const reg = await req('POST', '/api/auth/register', { body: { email: mainEmail, password: 'e2emain123', code: mainCode } });
+    if (!reg.data.token) { console.log('FAIL  无法创建测试账号', JSON.stringify(reg.data)); process.exit(1); }
+    token = reg.data.token;
+    console.log(`  [生产模式] 测试账号 ${mainEmail}`);
+  } else {
+    token = signJwt({ sub: '1', email: 'tester@junwind.site', iat: Math.floor(Date.now() / 1000), exp: Math.floor(Date.now() / 1000) + 3600 });
+    mainEmail = 'tester@junwind.site';
+  }
 
   const me = await req('GET', '/api/auth/me', { token });
-  check('GET /auth/me', me.status === 200 && me.data.email === 'tester@junwind.site', JSON.stringify(me));
+  check('GET /auth/me', me.status === 200 && me.data.email === mainEmail, JSON.stringify(me));
 
   // 保存纯域名 → 网站，分类=域名
   const site = await req('POST', '/api/links', { token, body: { url: 'https://github.com/', title: 'GitHub' } });
@@ -73,7 +112,7 @@ async function req(method, path, { body, token } = {}) {
   const ott = await req('POST', '/api/sso/ott', { token });
   check('签发 OTT', ott.status === 200 && /^[0-9a-f]{32}$/.test(ott.data.ott || ''), JSON.stringify(ott));
   const ex = await req('POST', '/api/sso/exchange', { body: { ott: ott.data.ott } });
-  check('OTT 交换正式凭证', ex.status === 200 && ex.data.token && ex.data.email === 'tester@junwind.site', JSON.stringify(ex).slice(0, 200));
+  check('OTT 交换正式凭证', ex.status === 200 && ex.data.token && ex.data.email === mainEmail, JSON.stringify(ex).slice(0, 200));
   const ex2 = await req('POST', '/api/sso/exchange', { body: { ott: ott.data.ott } });
   check('OTT 一次性（第二次失效）', ex2.status === 401, JSON.stringify(ex2));
 
@@ -104,29 +143,6 @@ async function req(method, path, { body, token } = {}) {
 
   // ---- 注册 / 密码登录 / 找回密码 ----
   // 本地 .dev.vars 为假 Resend 密钥，发信返回 502，但验证码已写入 KV，可从本地 KV 读取
-  const { execSync } = require('child_process');
-  const path = require('path');
-  // 本地 miniflare 异步刷盘，读码需轮询等待键可见
-  const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-  const readLocalCode = (purpose, email, tries = 12) => {
-    const key = `code:${purpose}:${email}`;
-    let lastErr = '';
-    for (let i = 0; i < tries; i++) {
-      try {
-        const raw = execSync(`npx wrangler kv key get "${key}" --binding KV --local`, {
-          cwd: path.join(__dirname, '..', 'worker'),
-          encoding: 'utf8',
-          stdio: ['ignore', 'pipe', 'ignore'],
-        });
-        return JSON.parse(raw.replace(/\x1b\[[0-9;]*m/g, '').trim().split('\n').pop()).code;
-      } catch (e) {
-        lastErr = String(e.stderr || e.message).slice(0, 100);
-        sleepSync(800);
-      }
-    }
-    throw new Error(`未能读取本地验证码 ${key}: ${lastErr}`);
-  };
-
   const regEmail = `e2e-reg-${Date.now()}@test.local`;
   const pw1 = 'e2epass123';
   const pw2 = 'e2enew456';

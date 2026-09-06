@@ -492,11 +492,11 @@ function bindEvents() {
       if (!confirm('确定删除这条收藏吗？')) return;
       try {
         await api(`/links/${itemEl.dataset.id}`, { method: 'DELETE' });
-        itemEl.remove();
         state.total -= 1;
         // 已加载条数同步回退，避免「加载更多」漏掉前移的一条
         if (state.offset > 0) state.offset -= 1;
-        refreshOverview();
+        // 重拉当前视图：同步空状态/加载更多按钮/总数
+        await Promise.all([refreshOverview(), loadList(true)]);
       } catch (err) {
         showToast(err.message);
       }
