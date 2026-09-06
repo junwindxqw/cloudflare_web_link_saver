@@ -61,6 +61,41 @@ button { font-family: inherit; }
 }
 .login-status.info { color: var(--primary); }
 
+.auth-tabs {
+  display: flex;
+  gap: 6px;
+  background: #eef1f5;
+  border-radius: 10px;
+  padding: 4px;
+  margin-bottom: 16px;
+}
+.auth-tab {
+  flex: 1;
+  border: none;
+  background: none;
+  padding: 8px;
+  border-radius: 8px;
+  font-size: 14px;
+  color: var(--muted);
+  cursor: pointer;
+  font-weight: 600;
+}
+.auth-tab.active { background: #fff; color: var(--text); box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08); }
+
+.label-row { display: flex; justify-content: space-between; align-items: center; }
+.label-row a { font-size: 12px; }
+
+.btn-text {
+  width: 100%;
+  border: none;
+  background: none;
+  color: var(--primary);
+  font-size: 13px;
+  cursor: pointer;
+  padding: 12px 0 0;
+}
+.auth-note { color: #9ca3af; font-size: 12px; text-align: center; margin: 12px 0 0; }
+
 .form-row { margin-bottom: 14px; }
 .form-row label {
   display: block;

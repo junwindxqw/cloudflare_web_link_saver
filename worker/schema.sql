@@ -1,9 +1,11 @@
 -- Link Saver 数据库结构（Cloudflare D1 / SQLite）
 
 CREATE TABLE IF NOT EXISTS users (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  email      TEXT NOT NULL UNIQUE,
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+  id             INTEGER PRIMARY KEY AUTOINCREMENT,
+  email          TEXT NOT NULL UNIQUE,
+  password_hash  TEXT,
+  email_verified INTEGER NOT NULL DEFAULT 0,
+  created_at     TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
 CREATE TABLE IF NOT EXISTS links (

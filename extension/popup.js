@@ -1,7 +1,7 @@
 import { API_BASE, WEB_ORIGIN } from './config.js';
 
 const $ = (id) => document.getElementById(id);
-const state = { token: null, email: null, stage: 'email' };
+const state = { token: null, email: null, mode: 'password', stage: 'email' };
 
 // 统一的 JSON 请求封装：参数通过请求体传递，不做任何字符串拼接
 async function postJson(path, payload) {
@@ -26,15 +26,37 @@ function render() {
   $('logged-out').classList.toggle('hidden', Boolean(state.token));
   if (state.token) {
     $('user-email').textContent = state.email || '';
-  } else {
-    $('code-row').classList.toggle('hidden', state.stage !== 'code');
-    // 验证码阶段锁定邮箱，避免改邮箱后验证失败
-    $('email').readOnly = state.stage === 'code';
-    $('btn-login').textContent = state.stage === 'email' ? '发送验证码' : '登录';
+    return;
+  }
+  const isCode = state.mode === 'code';
+  $('tab-pw').classList.toggle('active', !isCode);
+  $('tab-code').classList.toggle('active', isCode);
+  $('pw-row').classList.toggle('hidden', isCode);
+  $('code-row').classList.toggle('hidden', !isCode);
+  $('email').readOnly = isCode && state.stage === 'code';
+  $('btn-login').textContent = isCode
+    ? (state.stage === 'email' ? '发送验证码' : '登录')
+    : '登录';
+}
+
+async function loginPassword() {
+  const email = $('email').value.trim();
+  const password = $('password').value;
+  if (!email || !password) return setMsg('请输入邮箱和密码');
+  setMsg('正在登录…', true);
+  try {
+    const data = await postJson('/api/auth/login', { email, password });
+    state.token = data.token;
+    state.email = data.email;
+    await chrome.storage.local.set({ token: data.token, email: data.email });
+    setMsg('');
+    render();
+  } catch (e) {
+    setMsg(e.message);
   }
 }
 
-async function requestCode() {
+async function sendCode() {
   const email = $('email').value.trim();
   if (!email) return setMsg('请输入邮箱地址');
   setMsg('正在发送验证码…', true);
@@ -87,24 +109,39 @@ async function main() {
   state.email = email || '';
   render();
 
-  $('btn-login').addEventListener('click', () => (state.stage === 'email' ? requestCode() : verifyCode()));
+  $('tab-pw').addEventListener('click', () => { state.mode = 'password'; state.stage = 'email'; setMsg(''); render(); });
+  $('tab-code').addEventListener('click', () => { state.mode = 'code'; state.stage = 'email'; setMsg(''); render(); });
+
+  $('btn-login').addEventListener('click', () => {
+    if (state.mode === 'password') return loginPassword();
+    return state.stage === 'email' ? sendCode() : verifyCode();
+  });
+  $('password').addEventListener('keydown', (e) => { if (e.key === 'Enter') loginPassword(); });
+  $('email').addEventListener('keydown', (e) => { if (e.key === 'Enter') (state.mode === 'password' ? $('password') : state.stage === 'email' ? $('code') : $('code')).focus(); });
   $('code').addEventListener('keydown', (e) => { if (e.key === 'Enter') verifyCode(); });
-  $('email').addEventListener('keydown', (e) => { if (e.key === 'Enter') requestCode(); });
   $('btn-save').addEventListener('click', saveCurrentPage);
   $('btn-logout').addEventListener('click', async () => {
     await chrome.storage.local.remove(['token', 'email']);
     state.token = null;
     state.email = null;
+    state.mode = 'password';
     state.stage = 'email';
     $('email').value = '';
+    $('password').value = '';
     $('code').value = '';
     setMsg('');
     render();
   });
 
-  const webLink = $('open-web');
+  const webLink = $('link-web');
   webLink.href = WEB_ORIGIN;
   webLink.addEventListener('click', (e) => {
+    e.preventDefault();
+    chrome.tabs.create({ url: WEB_ORIGIN });
+    window.close();
+  });
+
+  $('open-web').addEventListener('click', (e) => {
     e.preventDefault();
     chrome.tabs.create({ url: WEB_ORIGIN });
     window.close();

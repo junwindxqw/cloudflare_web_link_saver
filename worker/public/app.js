@@ -56,7 +56,7 @@ async function api(path, { method = 'GET', body, auth = true } = {}) {
   return data;
 }
 
-/* ---------------- 登录 ---------------- */
+/* ---------------- 登录 / 注册 / 找回密码 ---------------- */
 
 function setLoginStatus(msg, info = false) {
   const el = $('login-status');
@@ -64,45 +64,78 @@ function setLoginStatus(msg, info = false) {
   el.classList.toggle('info', info);
 }
 
-let loginStage = 'email'; // email | code
+let authTab = 'login';        // login | register | reset
+let loginMethod = 'password'; // password | code
+const countdownTimers = new Map();
 
-function switchLoginStage(stage) {
-  loginStage = stage;
-  $('code-row').classList.toggle('hidden', stage !== 'code');
-  // 验证码阶段锁定邮箱，避免改邮箱后拿 A 的码验证 B
-  $('login-email').readOnly = stage === 'code';
-  $('btn-main').textContent = stage === 'email' ? '发送验证码' : '登录';
+function startCountdown(btn, sec) {
+  clearInterval(countdownTimers.get(btn));
+  const label = btn.dataset.label || '发送验证码';
+  btn.disabled = true;
+  const finish = () => {
+    clearInterval(countdownTimers.get(btn));
+    countdownTimers.delete(btn);
+    btn.disabled = false;
+    btn.textContent = label;
+  };
+  countdownTimers.set(btn, setInterval(() => {
+    sec -= 1;
+    if (sec <= 0) return finish();
+    btn.textContent = `${sec}s 后可重发`;
+  }, 1000));
+  btn.textContent = `${sec}s 后可重发`;
 }
 
-async function requestCode() {
-  const email = $('login-email').value.trim();
+function showAuthView(tab) {
+  authTab = tab;
+  for (const t of ['login', 'register', 'reset']) {
+    $(`view-${t}`).classList.toggle('hidden', t !== tab);
+    document.querySelector(`.auth-tab[data-tab="${t}"]`)?.classList.toggle('active', t === tab);
+  }
+  $('login-email').readOnly = false;
+  $('reg-email').readOnly = false;
+  $('reset-email').readOnly = false;
+  if (tab === 'login') applyLoginMethod();
+  setLoginStatus('');
+}
+
+function applyLoginMethod() {
+  $('login-password-row').classList.toggle('hidden', loginMethod !== 'password');
+  $('login-code-row').classList.toggle('hidden', loginMethod !== 'code');
+  $('btn-login').textContent = loginMethod === 'password' ? '登录' : '验证码登录';
+  $('btn-switch-login').textContent = loginMethod === 'password' ? '使用验证码登录' : '使用密码登录';
+}
+
+// 发送各类验证码；成功后锁定邮箱并进入 60s 重发倒计时
+async function sendAuthCode(path, email, sendBtn, emailInput) {
   if (!email) return setLoginStatus('请输入邮箱地址');
   setLoginStatus('正在发送验证码…', true);
   try {
-    const data = await api('/auth/request-code', { method: 'POST', body: { email }, auth: false });
+    const data = await api(path, { method: 'POST', body: { email }, auth: false });
     setLoginStatus(data.message || '验证码已发送', true);
-    switchLoginStage('code');
-    $('login-code').focus();
-    startResendCountdown(60);
+    emailInput.readOnly = true;
+    startCountdown(sendBtn, 60);
+    return true;
+  } catch (e) {
+    setLoginStatus(e.message);
+    return false;
+  }
+}
+
+async function doPasswordLogin() {
+  const email = $('login-email').value.trim();
+  const password = $('login-password').value;
+  if (!email || !password) return setLoginStatus('请输入邮箱和密码');
+  setLoginStatus('正在登录…', true);
+  try {
+    const data = await api('/auth/login', { method: 'POST', body: { email, password }, auth: false });
+    enterApp(data.token, data.email);
   } catch (e) {
     setLoginStatus(e.message);
   }
 }
 
-let resendTimer = null;
-function startResendCountdown(sec) {
-  const btn = $('btn-resend');
-  btn.disabled = true;
-  clearInterval(resendTimer);
-  resendTimer = setInterval(() => {
-    sec -= 1;
-    btn.textContent = sec > 0 ? `${sec}s 后可重发` : '重新发送';
-    if (sec <= 0) { clearInterval(resendTimer); btn.disabled = false; }
-  }, 1000);
-  btn.textContent = `${sec}s 后可重发`;
-}
-
-async function verifyCode() {
+async function doCodeLogin() {
   const email = $('login-email').value.trim();
   const code = $('login-code').value.trim();
   if (!email) return setLoginStatus('请输入邮箱地址');
@@ -110,6 +143,38 @@ async function verifyCode() {
   setLoginStatus('正在登录…', true);
   try {
     const data = await api('/auth/verify', { method: 'POST', body: { email, code }, auth: false });
+    enterApp(data.token, data.email);
+  } catch (e) {
+    setLoginStatus(e.message);
+  }
+}
+
+async function doRegister() {
+  const email = $('reg-email').value.trim();
+  const password = $('reg-password').value;
+  const code = $('reg-code').value.trim();
+  if (!email) return setLoginStatus('请输入邮箱地址');
+  if (!password) return setLoginStatus('请设置密码（至少 8 位，含字母和数字）');
+  if (!/^\d{6}$/.test(code)) return setLoginStatus('请先获取并输入 6 位邮箱验证码');
+  setLoginStatus('正在注册…', true);
+  try {
+    const data = await api('/auth/register', { method: 'POST', body: { email, password, code }, auth: false });
+    enterApp(data.token, data.email);
+  } catch (e) {
+    setLoginStatus(e.message);
+  }
+}
+
+async function doResetPassword() {
+  const email = $('reset-email').value.trim();
+  const code = $('reset-code').value.trim();
+  const newPassword = $('reset-password').value;
+  if (!email) return setLoginStatus('请输入注册邮箱');
+  if (!/^\d{6}$/.test(code)) return setLoginStatus('请先获取并输入 6 位重置验证码');
+  if (!newPassword) return setLoginStatus('请设置新密码（至少 8 位，含字母和数字）');
+  setLoginStatus('正在重置密码…', true);
+  try {
+    const data = await api('/auth/reset-password', { method: 'POST', body: { email, code, new_password: newPassword }, auth: false });
     enterApp(data.token, data.email);
   } catch (e) {
     setLoginStatus(e.message);
@@ -364,10 +429,32 @@ async function applyFilter(patch) {
 /* ---------------- 事件绑定 ---------------- */
 
 function bindEvents() {
-  $('btn-main').addEventListener('click', () => (loginStage === 'email' ? requestCode() : verifyCode()));
-  $('btn-resend').addEventListener('click', requestCode);
-  $('login-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') verifyCode(); });
-  $('login-email').addEventListener('keydown', (e) => { if (e.key === 'Enter') requestCode(); });
+  document.querySelectorAll('.auth-tab').forEach((tab) => {
+    tab.addEventListener('click', () => showAuthView(tab.dataset.tab));
+  });
+  $('btn-switch-login').addEventListener('click', () => {
+    loginMethod = loginMethod === 'password' ? 'code' : 'password';
+    applyLoginMethod();
+  });
+  $('link-forgot').addEventListener('click', (e) => { e.preventDefault(); showAuthView('reset'); });
+  $('btn-back-login').addEventListener('click', () => showAuthView('login'));
+
+  $('btn-login').addEventListener('click', () => (loginMethod === 'password' ? doPasswordLogin() : doCodeLogin()));
+  $('btn-login-code-send').addEventListener('click', () => sendAuthCode('/auth/request-code', $('login-email').value.trim(), $('btn-login-code-send'), $('login-email')));
+  $('btn-register').addEventListener('click', doRegister);
+  $('btn-reg-send').addEventListener('click', () => sendAuthCode('/auth/register/request-code', $('reg-email').value.trim(), $('btn-reg-send'), $('reg-email')));
+  $('btn-reset').addEventListener('click', doResetPassword);
+  $('btn-reset-send').addEventListener('click', () => sendAuthCode('/auth/reset/request-code', $('reset-email').value.trim(), $('btn-reset-send'), $('reset-email')));
+
+  $('login-password').addEventListener('keydown', (e) => { if (e.key === 'Enter') doPasswordLogin(); });
+  $('login-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') doCodeLogin(); });
+  $('login-email').addEventListener('keydown', (e) => { if (e.key === 'Enter') (loginMethod === 'password' ? $('login-password') : $('login-code')).focus(); });
+  $('reg-password').addEventListener('keydown', (e) => { if (e.key === 'Enter') doRegister(); });
+  $('reg-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') doRegister(); });
+  $('reg-email').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('reg-password').focus(); });
+  $('reset-code').addEventListener('keydown', (e) => { if (e.key === 'Enter') doResetPassword(); });
+  $('reset-password').addEventListener('keydown', (e) => { if (e.key === 'Enter') doResetPassword(); });
+  $('reset-email').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('reset-code').focus(); });
 
   $('btn-logout').addEventListener('click', logout);
 

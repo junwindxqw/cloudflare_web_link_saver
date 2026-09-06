@@ -20,16 +20,25 @@
 
   <!-- 未登录 -->
   <section id="logged-out" class="hidden">
+    <div class="mode-tabs">
+      <button id="tab-pw" type="button" class="active">密码登录</button>
+      <button id="tab-code" type="button">验证码登录</button>
+    </div>
     <div class="form-row">
       <label for="email">邮箱</label>
       <input id="email" type="email" placeholder="you@example.com" autocomplete="email" />
+    </div>
+    <div class="form-row" id="pw-row">
+      <label for="password">密码</label>
+      <input id="password" type="password" placeholder="••••••••" autocomplete="current-password" />
     </div>
     <div class="form-row hidden" id="code-row">
       <label for="code">验证码</label>
       <input id="code" type="text" inputmode="numeric" maxlength="6" placeholder="6 位数字" autocomplete="one-time-code" />
     </div>
     <div id="msg" class="msg"></div>
-    <button id="btn-login" class="btn-primary">发送验证码</button>
+    <button id="btn-login" class="btn-primary">登录</button>
+    <p class="popup-note">注册账号 / 忘记密码？<a id="link-web" href="#">打开 Web 端</a></p>
   </section>
 
   <script type="module" src="popup.js"></script>

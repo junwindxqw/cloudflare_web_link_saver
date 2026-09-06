@@ -18,9 +18,13 @@
   - 网站分类侧栏 + 文章月份归档 + 类型筛选 + 搜索 + 加载更多
   - 支持删除收藏、点击文章条目里的域名跳转到该网站分类
 - **登录与凭证打通**
-  - 邮箱 + 6 位验证码登录（Resend 发信），JWT 有效期 30 天
+  - 注册：邮箱 + 密码 + 邮箱验证码（验证所有权）；密码 PBKDF2-HMAC-SHA256 加盐存储
+  - 登录：密码登录，或邮箱验证码免密登录（验证码登录对未注册邮箱自动建号）
+  - 找回密码：邮箱接收重置验证码 → 设置新密码（响应一致，防账号枚举）
+  - 密码登录带防爆破（同账号连续失败 10 次锁定 15 分钟）；验证码 60s 重发冷却 + 单 IP 每日限额
+  - JWT 有效期 30 天
   - 扩展已登录时，打开 Web 页面通过 `externally_connectable` 消息桥自动换取凭证，**免登录**
-  - 未装扩展 / 未登录时，Web 端独立使用邮箱验证码登录
+  - 未装扩展 / 未登录时，Web 端独立使用上述任一方式登录
 
 ## 目录结构
 
@@ -65,11 +69,17 @@ npx wrangler kv namespace create KV
 npm run db:init:remote        # 初始化远端 D1 表结构
 ```
 
-### 2. 配置密钥
+### 2. 配置密钥与数据库迁移
 
 ```bash
 npx wrangler secret put JWT_SECRET      # 随机长字符串，如 openssl rand -hex 32
 npx wrangler secret put RESEND_API_KEY  # Resend 后台创建的 API Key（re_ 开头）
+```
+
+已有部署升级时需执行增量迁移（首次部署用 `db:init:remote` 即可，无需迁移）：
+
+```bash
+npx wrangler d1 execute link-saver-db --remote --file=migrations/0001_user_password.sql
 ```
 
 `MAIL_FROM` 默认为 `Link Saver <noreply@junwind.site>`，可在 `wrangler.jsonc` 的 `vars` 中修改。
@@ -109,8 +119,13 @@ node scripts/security-proof.cjs  # 运行时安全实证：SQL 注入载荷惰�
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| POST | `/api/auth/request-code` | 发送登录验证码（60s 冷却，单 IP 每日 20 封上限） |
-| POST | `/api/auth/verify` | 验证码换 JWT（5 次尝试上限） |
+| POST | `/api/auth/request-code` | 发送登录验证码（免密登录，未注册邮箱自动建号） |
+| POST | `/api/auth/verify` | 验证码登录 |
+| POST | `/api/auth/register/request-code` | 发送注册验证码（已注册邮箱返回 409） |
+| POST | `/api/auth/register` | 注册：邮箱 + 密码 + 邮箱验证码 |
+| POST | `/api/auth/login` | 密码登录（防爆破锁定） |
+| POST | `/api/auth/reset/request-code` | 发送重置验证码（响应一致防枚举） |
+| POST | `/api/auth/reset-password` | 重置密码并返回新凭证 |
 | GET | `/api/auth/me` | 当前用户与统计 |
 | POST | `/api/links` | 保存网址，服务端自动分类（重复保存则刷新时间与标题） |
 | GET | `/api/links` | 列表，支持 `type` / `category` / `month` / `q` / `limit` / `offset` |

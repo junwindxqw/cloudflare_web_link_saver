@@ -102,6 +102,69 @@ async function req(method, path, { body, token } = {}) {
     check('删除文章', del.status === 200, JSON.stringify(del));
   }
 
+  // ---- 注册 / 密码登录 / 找回密码 ----
+  // 本地 .dev.vars 为假 Resend 密钥，发信返回 502，但验证码已写入 KV，可从本地 KV 读取
+  const { execSync } = require('child_process');
+  const path = require('path');
+  // 本地 miniflare 异步刷盘，读码需轮询等待键可见
+  const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  const readLocalCode = (purpose, email, tries = 12) => {
+    const key = `code:${purpose}:${email}`;
+    let lastErr = '';
+    for (let i = 0; i < tries; i++) {
+      try {
+        const raw = execSync(`npx wrangler kv key get "${key}" --binding KV --local`, {
+          cwd: path.join(__dirname, '..', 'worker'),
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'ignore'],
+        });
+        return JSON.parse(raw.replace(/\x1b\[[0-9;]*m/g, '').trim().split('\n').pop()).code;
+      } catch (e) {
+        lastErr = String(e.stderr || e.message).slice(0, 100);
+        sleepSync(800);
+      }
+    }
+    throw new Error(`未能读取本地验证码 ${key}: ${lastErr}`);
+  };
+
+  const regEmail = `e2e-reg-${Date.now()}@test.local`;
+  const pw1 = 'e2epass123';
+  const pw2 = 'e2enew456';
+
+  const regReq = await req('POST', '/api/auth/register/request-code', { body: { email: regEmail } });
+  console.log('  [register/request-code]', regReq.status, JSON.stringify(regReq.data));
+  const regCode = readLocalCode('register', regEmail);
+  const reg = await req('POST', '/api/auth/register', { body: { email: regEmail, password: pw1, code: regCode } });
+  check('注册成功并返回凭证', reg.status === 200 && reg.data.token, JSON.stringify(reg.data));
+
+  const dupReg = await req('POST', '/api/auth/register/request-code', { body: { email: regEmail } });
+  check('重复注册邮箱被拒(409)', dupReg.status === 409, JSON.stringify(dupReg.data));
+
+  const weak = await req('POST', '/api/auth/register', { body: { email: regEmail, password: 'short', code: '000000' } });
+  check('弱密码被拒', weak.status === 400 && /密码/.test(weak.data.error), JSON.stringify(weak.data));
+
+  const wrongPw = await req('POST', '/api/auth/login', { body: { email: regEmail, password: 'wrongpass1' } });
+  check('错误密码返回 401', wrongPw.status === 401, JSON.stringify(wrongPw.data));
+
+  const noPw = await req('POST', '/api/auth/login', { body: { email: 'tester@junwind.site', password: 'whatever1' } });
+  check('未设密码账号给出引导提示', noPw.status === 401 && /未设置密码/.test(noPw.data.error), JSON.stringify(noPw.data));
+
+  const okLogin = await req('POST', '/api/auth/login', { body: { email: regEmail, password: pw1 } });
+  check('密码登录成功', okLogin.status === 200 && okLogin.data.token, JSON.stringify(okLogin.data));
+
+  await req('POST', '/api/auth/reset/request-code', { body: { email: regEmail } });
+  const resetCode = readLocalCode('reset', regEmail);
+  const reset = await req('POST', '/api/auth/reset-password', { body: { email: regEmail, code: resetCode, new_password: pw2 } });
+  check('重置密码成功', reset.status === 200 && reset.data.token, JSON.stringify(reset.data));
+
+  const oldPw = await req('POST', '/api/auth/login', { body: { email: regEmail, password: pw1 } });
+  check('旧密码已失效', oldPw.status === 401, JSON.stringify(oldPw.data));
+  const newPw = await req('POST', '/api/auth/login', { body: { email: regEmail, password: pw2 } });
+  check('新密码可登录', newPw.status === 200 && newPw.data.token, JSON.stringify(newPw.data));
+
+  const ghost = await req('POST', '/api/auth/reset/request-code', { body: { email: `e2e-ghost-${Date.now()}@test.local` } });
+  check('重置请求防枚举（未注册也返回 ok）', ghost.status === 200 && ghost.data.ok === true, JSON.stringify(ghost.data));
+
   console.log(failed ? `\n${failed} 项失败` : '\n全部通过');
   process.exit(failed ? 1 : 0);
 })();

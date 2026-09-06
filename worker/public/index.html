@@ -20,19 +20,79 @@
 
       <div id="login-status" class="login-status" role="alert"></div>
 
-      <div class="form-row">
-        <label for="login-email">邮箱</label>
-        <input id="login-email" type="email" placeholder="you@example.com" autocomplete="email" />
-      </div>
-      <div class="form-row code-row hidden" id="code-row">
-        <label for="login-code">验证码</label>
-        <div class="code-input">
-          <input id="login-code" type="text" inputmode="numeric" maxlength="6" placeholder="6 位数字验证码" autocomplete="one-time-code" />
-          <button id="btn-resend" type="button" class="btn-link">重新发送</button>
-        </div>
+      <div class="auth-tabs" id="auth-tabs">
+        <button class="auth-tab active" data-tab="login" type="button">登录</button>
+        <button class="auth-tab" data-tab="register" type="button">注册</button>
       </div>
 
-      <button id="btn-main" type="button" class="btn-primary">发送验证码</button>
+      <!-- 登录：密码 / 验证码 两种方式 -->
+      <div id="view-login">
+        <div class="form-row">
+          <label for="login-email">邮箱</label>
+          <input id="login-email" type="email" placeholder="you@example.com" autocomplete="email" />
+        </div>
+        <div class="form-row" id="login-password-row">
+          <div class="label-row">
+            <label for="login-password">密码</label>
+            <a id="link-forgot" href="#">忘记密码？</a>
+          </div>
+          <input id="login-password" type="password" placeholder="••••••••" autocomplete="current-password" />
+        </div>
+        <div class="form-row code-row hidden" id="login-code-row">
+          <label for="login-code">验证码</label>
+          <div class="code-input">
+            <input id="login-code" type="text" inputmode="numeric" maxlength="6" placeholder="6 位数字验证码" autocomplete="one-time-code" />
+            <button id="btn-login-code-send" type="button" class="btn-link" data-label="发送验证码">发送验证码</button>
+          </div>
+        </div>
+
+        <button id="btn-login" type="button" class="btn-primary">登录</button>
+        <button id="btn-switch-login" type="button" class="btn-text">使用验证码登录</button>
+      </div>
+
+      <!-- 注册：邮箱 + 密码 + 邮箱验证码 -->
+      <div id="view-register" class="hidden">
+        <div class="form-row">
+          <label for="reg-email">邮箱</label>
+          <input id="reg-email" type="email" placeholder="you@example.com" autocomplete="email" />
+        </div>
+        <div class="form-row">
+          <label for="reg-password">密码（至少 8 位，含字母和数字）</label>
+          <input id="reg-password" type="password" placeholder="••••••••" autocomplete="new-password" />
+        </div>
+        <div class="form-row code-row">
+          <label for="reg-code">邮箱验证码</label>
+          <div class="code-input">
+            <input id="reg-code" type="text" inputmode="numeric" maxlength="6" placeholder="6 位数字验证码" autocomplete="one-time-code" />
+            <button id="btn-reg-send" type="button" class="btn-link" data-label="发送验证码">发送验证码</button>
+          </div>
+        </div>
+
+        <button id="btn-register" type="button" class="btn-primary">注册并登录</button>
+        <p class="auth-note">已有账号？切换到「登录」。</p>
+      </div>
+
+      <!-- 找回密码：重置验证码 + 新密码 -->
+      <div id="view-reset" class="hidden">
+        <div class="form-row">
+          <label for="reset-email">注册邮箱</label>
+          <input id="reset-email" type="email" placeholder="you@example.com" autocomplete="email" />
+        </div>
+        <div class="form-row code-row">
+          <label for="reset-code">重置验证码</label>
+          <div class="code-input">
+            <input id="reset-code" type="text" inputmode="numeric" maxlength="6" placeholder="6 位数字验证码" autocomplete="one-time-code" />
+            <button id="btn-reset-send" type="button" class="btn-link" data-label="发送验证码">发送验证码</button>
+          </div>
+        </div>
+        <div class="form-row">
+          <label for="reset-password">新密码（至少 8 位，含字母和数字）</label>
+          <input id="reset-password" type="password" placeholder="••••••••" autocomplete="new-password" />
+        </div>
+
+        <button id="btn-reset" type="button" class="btn-primary">重置密码并登录</button>
+        <button id="btn-back-login" type="button" class="btn-text">返回登录</button>
+      </div>
 
       <p class="login-hint">已安装 Link Saver 插件并登录？打开本页面会自动登录。</p>
     </div>
