@@ -8,17 +8,21 @@
   "assets": {
     "directory": "./public"
   },
+  "routes": [
+    // 域名 junwind.site 需托管在同一 Cloudflare 账号下，deploy 时自动创建自定义域
+    { "pattern": "link-saver.junwind.site", "custom_domain": true }
+  ],
   "d1_databases": [
     {
       "binding": "DB",
       "database_name": "link-saver-db",
-      "database_id": "00000000-0000-0000-0000-000000000000"
+      "database_id": "d53c6c50-53e0-44bd-a49f-3786527dba6a"
     }
   ],
   "kv_namespaces": [
     {
       "binding": "KV",
-      "id": "00000000000000000000000000000000"
+      "id": "c9a2e5f1d5b1423c91f8a3a05e24e84e"
     }
   ],
   "vars": {
