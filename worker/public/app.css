@@ -354,6 +354,8 @@ button { font-family: inherit; }
 }
 .badge.article { background: #fdf3e7; color: #c2711d; }
 .badge.site { background: #e8f7ee; color: #15803d; }
+.badge.text { background: #eef2ff; color: #4f46e5; }
+.badge.image { background: #ecfdf5; color: #0d9488; }
 .item-domain { cursor: pointer; }
 .item-domain:hover { color: var(--primary); }
 .item-del {
@@ -367,6 +369,72 @@ button { font-family: inherit; }
   flex-shrink: 0;
 }
 .item-del:hover { color: var(--danger); background: #fef2f2; }
+
+/* ---------- 选中的短文本 / 图片 ---------- */
+.item.snippet .item-main { display: flex; flex-direction: column; gap: 8px; }
+
+.snip-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-size: 14.5px;
+  display: -webkit-box;
+  -webkit-line-clamp: 6;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  cursor: pointer;
+}
+.snip-text.expanded { display: block; -webkit-line-clamp: none; overflow: visible; }
+
+.snip-img { display: flex; }
+.snip-img.broken {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 18px 24px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  color: #9ca3af;
+  font-size: 12.5px;
+}
+.snip-img.broken::before { content: '图片已失效或加载失败'; }
+.snip-img.broken img { display: none; }
+.snip-thumb {
+  max-width: min(320px, 100%);
+  max-height: 200px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: #fafbfc;
+  cursor: zoom-in;
+  object-fit: contain;
+}
+
+.snip-source {
+  max-width: 340px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.img-lightbox {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(15, 23, 42, 0.82);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  cursor: zoom-out;
+}
+.img-lightbox img {
+  max-width: 94vw;
+  max-height: 90vh;
+  border-radius: 8px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  background: #fff;
+}
+
+.layout.single-col { grid-template-columns: 1fr; }
 
 .empty {
   text-align: center;

@@ -110,7 +110,7 @@
       </div>
     </header>
 
-    <div class="layout">
+    <div class="layout" id="layout">
       <aside class="sidebar" id="sidebar">
         <section class="side-section">
           <h2>网站分类</h2>
@@ -128,9 +128,11 @@
             <button class="chip active" data-type="all">全部</button>
             <button class="chip" data-type="site">网站</button>
             <button class="chip" data-type="article">文章</button>
+            <button class="chip" data-type="text">短文本</button>
+            <button class="chip" data-type="image">图片</button>
           </div>
           <div class="search">
-            <input id="search-input" type="search" placeholder="搜索标题或网址…" />
+            <input id="search-input" type="search" placeholder="搜索标题、网址或内容…" />
           </div>
         </div>
 
@@ -146,6 +148,7 @@
   </div>
 
   <div id="toast" class="toast hidden"></div>
+  <div id="img-lightbox" class="img-lightbox hidden"><img alt="图片预览" /></div>
 
   <script src="/app.js"></script>
 </body>

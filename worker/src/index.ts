@@ -3,6 +3,7 @@ import { cors } from 'hono/cors';
 import type { Env } from './types';
 import { authRoutes } from './auth';
 import { linkRoutes } from './links';
+import { snippetRoutes } from './snippets';
 import { ssoRoutes } from './sso';
 
 const EXTENSION_ORIGIN = 'chrome-extension://ojokkllejggilcghafadekmldpgcmphd';
@@ -28,6 +29,7 @@ app.use(
 
 app.route('/api/auth', authRoutes);
 app.route('/api/links', linkRoutes);
+app.route('/api/snippets', snippetRoutes);
 app.route('/api/sso', ssoRoutes);
 
 app.get('/api/health', (c) => c.json({ ok: true, time: new Date().toISOString() }));

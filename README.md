@@ -6,6 +6,9 @@
 
 - **Chrome 扩展（MV3）**
   - 右键菜单 **Send to Link Saver**：保存当前页面 / 右键链接
+  - 右键菜单 **保存选中文本到 Link Saver**：把页面上选中的一段文字存为短文本（上限 1 万字）
+  - 右键菜单 **保存图片到 Link Saver**：服务端抓取并转存图片到 KV（≤5MB，按内容哈希去重）；
+    转存失败时回退保存原始图片链接
   - 右键菜单 **Open Link Saver Web**：一键打开 Web 收藏夹（自动登录）
   - 工具栏弹窗：邮箱验证码登录、保存当前页面、打开 Web 端
   - 保存结果通过图标角标（✓ / !）与系统通知反馈
@@ -15,7 +18,9 @@
   - 文章按月份归档；保存时先入库兜底标题，服务端随后在后台抓取页面 `<title>` 自动回填（不阻塞保存请求）
   - 保存时自动剥离链接中的锚点与常见追踪参数（`utm_*`、`fbclid` 等），同一文章不会因入口不同存成多条
 - **Web 端（响应式，PC / 手机）**
-  - 网站分类侧栏 + 文章月份归档 + 类型筛选 + 搜索 + 加载更多
+  - 类型筛选：全部 / 网站 / 文章 / 短文本 / 图片
+  - 网站分类侧栏 + 文章月份归档 + 搜索 + 加载更多
+  - 短文本 / 图片按保存时间倒序展示，支持搜索内容与来源；转存图片经鉴权接口读取，点击可放大预览
   - 支持删除收藏、点击文章条目里的域名跳转到该网站分类
 - **登录与凭证打通**
   - 注册：邮箱 + 密码 + 邮箱验证码（验证所有权）；密码 PBKDF2-HMAC-SHA256 加盐存储
@@ -30,7 +35,7 @@
 
 ```
 ├── worker/                 # Cloudflare Worker（API + 静态资源）
-│   ├── src/                #   Hono 后端源码（auth / links / sso / email / url）
+│   ├── src/                #   Hono 后端源码（auth / links / snippets / sso / email / url）
 │   ├── public/             #   Web 前端（index.html / app.js / app.css）
 │   ├── schema.sql          #   D1 数据库结构
 │   └── wrangler.jsonc      #   Worker 配置
@@ -80,6 +85,7 @@ npx wrangler secret put RESEND_API_KEY  # Resend 后台创建的 API Key（re_ �
 
 ```bash
 npx wrangler d1 execute link-saver-db --remote --file=migrations/0001_user_password.sql
+npx wrangler d1 execute link-saver-db --remote --file=migrations/0002_snippets.sql
 ```
 
 `MAIL_FROM` 默认为 `Link Saver <noreply@junwind.site>`，可在 `wrangler.jsonc` 的 `vars` 中修改。
@@ -129,13 +135,17 @@ node scripts/security-proof.cjs  # 运行时安全实证：SQL 注入载荷惰�
 | GET | `/api/auth/me` | 当前用户与统计 |
 | POST | `/api/links` | 保存网址，服务端自动分类（重复保存则刷新时间与标题） |
 | GET | `/api/links` | 列表，支持 `type` / `category` / `month` / `q` / `limit` / `offset` |
-| GET | `/api/links/overview` | 网站分类 + 月份归档 + 各类型计数 |
+| GET | `/api/links/overview` | 网站分类 + 月份归档 + 各类型计数（含短文本/图片） |
 | DELETE | `/api/links/:id` | 删除收藏 |
+| POST | `/api/snippets` | 保存选中内容：`type=text`（正文 ≤1 万字）或 `type=image`（http/data URL，服务端转存） |
+| GET | `/api/snippets` | 短文本 / 图片列表，按时间倒序，支持 `type` / `q` / `limit` / `offset` |
+| GET | `/api/snippets/:id/image` | 读取已转存图片（仅本人；KV 未命中时 302 回退原始外链） |
+| DELETE | `/api/snippets/:id` | 删除短文本 / 图片（无引用的转存文件后台清理） |
 | POST | `/api/sso/ott` | 已登录扩展签发一次性令牌（120s、单次有效） |
 | POST | `/api/sso/exchange` | 一次性令牌换正式 JWT（Web 自动登录用） |
 | GET | `/api/health` | 健康检查 |
 
-所有保存的 URL 强制校验 `http/https` 协议并拒绝内网/保留地址（SSRF 防护）；服务端抓取标题时逐跳重新校验重定向目标。
+所有保存的 URL 强制校验 `http/https` 协议并拒绝内网/保留地址（SSRF 防护）；服务端抓取标题与转存图片时均手动跟随重定向，逐跳重新校验目标地址；图片转存限制 `image/*` 类型且不超过 5MB。
 
 ## 常见问题
 

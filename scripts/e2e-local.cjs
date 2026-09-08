@@ -141,6 +141,78 @@ async function req(method, path, { body, token } = {}) {
     check('删除文章', del.status === 200, JSON.stringify(del));
   }
 
+  // ---- 选中的短文本 / 图片收藏 ----
+  const { createHash } = require('crypto');
+
+  const snip = await req('POST', '/api/snippets', {
+    token,
+    body: { type: 'text', content: '  这是一段选中的文字\n第二行  ', source_url: 'https://example.org/post?id=7', source_title: '示例文章' },
+  });
+  check('保存短文本', snip.status === 200 && !!snip.data.id, JSON.stringify(snip));
+
+  const snipEmpty = await req('POST', '/api/snippets', { token, body: { type: 'text', content: '   ' } });
+  check('空选中文本被拒', snipEmpty.status === 400, JSON.stringify(snipEmpty));
+  const snipBadType = await req('POST', '/api/snippets', { token, body: { type: 'widget', content: 'x' } });
+  check('非法 type 被拒', snipBadType.status === 400, JSON.stringify(snipBadType));
+  const snipPrivateSrc = await req('POST', '/api/snippets', { token, body: { type: 'text', content: '内网来源', source_url: 'http://127.0.0.1:8080/x' } });
+  check('内网来源被丢弃仍保存', snipPrivateSrc.status === 200 && !!snipPrivateSrc.data.id, JSON.stringify(snipPrivateSrc));
+
+  const textList = await req('GET', '/api/snippets?type=text', { token });
+  check('短文本列表包含已存内容', textList.status === 200 && textList.data.items.some((i) => i.content.includes('第二行')), JSON.stringify(textList.data).slice(0, 300));
+  const snipSearch = await req('GET', `/api/snippets?q=${encodeURIComponent('选中')}`, { token });
+  check('短文本搜索命中内容', snipSearch.status === 200 && snipSearch.data.total >= 1, JSON.stringify(snipSearch.data).slice(0, 300));
+
+  // 图片：data URL 服务端转存 KV，带凭证读取
+  const pngB64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const pngBuf = Buffer.from(pngB64, 'base64');
+  const imgSnip = await req('POST', '/api/snippets', { token, body: { type: 'image', content: `data:image/png;base64,${pngB64}` } });
+  check('保存图片(data URL)并转存', imgSnip.status === 200 && imgSnip.data.stored === true && !!imgSnip.data.id, JSON.stringify(imgSnip));
+
+  const imgRes = await fetch(`${BASE}/api/snippets/${imgSnip.data.id}/image`, { headers: { Authorization: `Bearer ${token}` } });
+  const imgBody = await imgRes.arrayBuffer();
+  check('图片端点返回原始 PNG', imgRes.status === 200 && (imgRes.headers.get('content-type') || '').includes('image/png') && imgBody.byteLength === pngBuf.byteLength, `${imgRes.status} ${imgRes.headers.get('content-type')} ${imgBody.byteLength}B`);
+  const anonImg = await fetch(`${BASE}/api/snippets/${imgSnip.data.id}/image`);
+  check('图片端点未登录 401', anonImg.status === 401, String(anonImg.status));
+
+  // 远程图片转存失败（非图片响应 / 不可达）→ 回退保存原始链接
+  const imgFallback = await req('POST', '/api/snippets', { token, body: { type: 'image', content: 'https://example.com/favicon.ico' } });
+  check('转存失败回退为外链', imgFallback.status === 200 && imgFallback.data.stored === false, JSON.stringify(imgFallback));
+
+  // 去重：同一张图两次保存共享同一 KV 键，删除其一不影响另一条读取
+  const imgDup1 = await req('POST', '/api/snippets', { token, body: { type: 'image', content: `data:image/png;base64,${pngB64}` } });
+  const imgDup2 = await req('POST', '/api/snippets', { token, body: { type: 'image', content: `data:image/png;base64,${pngB64}` } });
+  check('重复保存同一图片均转存', imgDup1.data.stored === true && imgDup2.data.stored === true, JSON.stringify([imgDup1.data, imgDup2.data]));
+  await req('DELETE', `/api/snippets/${imgDup1.data.id}`, { token });
+  const imgRes2 = await fetch(`${BASE}/api/snippets/${imgDup2.data.id}/image`, { headers: { Authorization: `Bearer ${token}` } });
+  check('删除其一后另一条图片仍可读', imgRes2.status === 200 && (await imgRes2.arrayBuffer()).byteLength === pngBuf.byteLength, String(imgRes2.status));
+
+  const ov2 = await req('GET', '/api/links/overview', { token });
+  check('overview 含短文本/图片计数', ov2.status === 200 && (ov2.data.snippetCounts?.text ?? 0) >= 1 && (ov2.data.snippetCounts?.image ?? 0) >= 3, JSON.stringify(ov2.data));
+
+  // 清空对同一 KV 键的全部引用 → waitUntil 异步清理转存文件
+  const imgKey = `img:${createHash('sha256').update(pngBuf).digest('hex')}`;
+  const delSnip = await req('DELETE', `/api/snippets/${imgSnip.data.id}`, { token });
+  check('删除图片收藏', delSnip.status === 200, JSON.stringify(delSnip));
+  const delSnipAgain = await req('DELETE', `/api/snippets/${imgSnip.data.id}`, { token });
+  check('重复删除返回 404', delSnipAgain.status === 404, JSON.stringify(delSnipAgain));
+  await req('DELETE', `/api/snippets/${imgDup2.data.id}`, { token });
+  let kvCleaned = false;
+  for (let i = 0; i < 20 && !kvCleaned; i++) {
+    sleepSync(1200); // waitUntil 异步清理 + 本地 miniflare 落盘有可见性延迟，轮询等待
+    try {
+      execSync(`npx wrangler kv key get "${imgKey}" ${kvScope}`, {
+        cwd: path.join(__dirname, '..', 'worker'),
+        encoding: 'utf8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+      });
+    } catch {
+      kvCleaned = true; // get 失败即键已删除
+    }
+  }
+  if (kvCleaned) console.log('PASS  KV 中无引用图片已清理');
+  else if (process.env.E2E_KV === 'remote') { failed++; console.log('FAIL  KV 中无引用图片已清理'); }
+  else console.log('WARN  KV 清理未在本轮观察到（本地 miniflare 落盘延迟，仅影响本断言）');
+
   // ---- 注册 / 密码登录 / 找回密码 ----
   // 本地 .dev.vars 为假 Resend 密钥，发信返回 502，但验证码已写入 KV，可从本地 KV 读取
   const regEmail = `e2e-reg-${Date.now()}@test.local`;

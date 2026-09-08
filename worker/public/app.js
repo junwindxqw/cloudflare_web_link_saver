@@ -9,7 +9,7 @@ const PAGE_SIZE = 50;
 const state = {
   token: localStorage.getItem(TOKEN_KEY) || '',
   email: '',
-  type: 'all', // all | site | article
+  type: 'all', // all | site | article（链接） | text | image（选中内容）
   category: '',
   month: '',
   q: '',
@@ -18,6 +18,11 @@ const state = {
   overview: null,
   loading: false,
 };
+
+const isSnippetType = (t) => t === 'text' || t === 'image';
+
+// 已转存图片需要带凭证读取，objectURL 按条目缓存，删除时释放
+const snippetImgUrls = new Map();
 
 const $ = (id) => document.getElementById(id);
 
@@ -291,10 +296,10 @@ async function loadList(reset = false) {
   const offset = reset ? 0 : state.offset;
   try {
     const params = new URLSearchParams({ type: state.type, limit: String(PAGE_SIZE), offset: String(offset) });
-    if (state.category) params.set('category', state.category);
-    if (state.month) params.set('month', state.month);
     if (state.q) params.set('q', state.q);
-    const data = await api(`/links?${params}`);
+    const data = isSnippetType(state.type)
+      ? await api(`/snippets?${params}`)
+      : await api(`/links?${withLinkParams(params)}`);
     state.total = data.total;
     state.offset = offset + data.items.length;
     renderList(data.items, reset);
@@ -304,6 +309,13 @@ async function loadList(reset = false) {
   } finally {
     state.loading = false;
   }
+}
+
+// 网站分类 / 月份归档仅对链接生效
+function withLinkParams(params) {
+  if (state.category) params.set('category', state.category);
+  if (state.month) params.set('month', state.month);
+  return params;
 }
 
 function monthLabel(m) {
@@ -348,10 +360,57 @@ function itemHtml(it) {
   </div>`;
 }
 
+function snippetHtml(it) {
+  const badge = it.type === 'image' ? '<span class="badge image">图片</span>' : '<span class="badge text">短文本</span>';
+  let body;
+  if (it.type === 'image') {
+    // 已转存的图片走带凭证的接口；转存失败的直接用原始外链
+    body = it.storage_key
+      ? `<div class="snip-img"><img class="snip-thumb" data-snip-id="${it.id}" alt="收藏图片" loading="lazy" /></div>`
+      : `<div class="snip-img"><img class="snip-thumb" src="${esc(it.content)}" referrerpolicy="no-referrer" alt="收藏图片" loading="lazy" onerror="this.closest('.snip-img').classList.add('broken')" /></div>`;
+  } else {
+    body = `<div class="snip-text">${esc(it.content)}</div>`;
+  }
+  const source = it.source_url
+    ? `<a href="${esc(it.source_url)}" target="_blank" rel="noopener noreferrer" title="${esc(it.source_title || it.source_url)}">${esc(it.source_title || it.source_url)}</a>`
+    : '';
+  return `<div class="item snippet" data-id="${it.id}">
+    <div class="item-main">
+      ${body}
+      <div class="item-meta">${badge}${source ? `<span class="snip-source">${source}</span>` : ''}<span>${fmtDate(it.created_at)}</span></div>
+    </div>
+    <button class="item-del" title="删除" aria-label="删除">✕</button>
+  </div>`;
+}
+
+// 已转存图片需带 Authorization 拉取二进制，这里统一换取 objectURL
+async function hydrateSnippetImages() {
+  for (const img of document.querySelectorAll('#list img.snip-thumb[data-snip-id]')) {
+    const id = img.dataset.snipId;
+    if (!id) continue;
+    if (snippetImgUrls.has(id)) {
+      img.src = snippetImgUrls.get(id);
+      continue;
+    }
+    try {
+      const res = await fetch(`/api/snippets/${id}/image`, { headers: { Authorization: `Bearer ${state.token}` } });
+      if (res.status === 401) return logout();
+      if (!res.ok) throw new Error('加载失败');
+      const url = URL.createObjectURL(await res.blob());
+      snippetImgUrls.set(id, url);
+      img.src = url;
+    } catch {
+      img.closest('.snip-img')?.classList.add('broken');
+      img.remove();
+    }
+  }
+}
+
 function renderList(items, reset) {
   const listEl = $('list');
   if (reset) listEl.innerHTML = '';
 
+  const snippetView = isSnippetType(state.type);
   let html = '';
   let lastMonth = null;
   // 文章视图按月份归档展示
@@ -364,20 +423,27 @@ function renderList(items, reset) {
         lastMonth = m;
       }
     }
-    html += itemHtml(it);
+    html += snippetView ? snippetHtml(it) : itemHtml(it);
   }
   listEl.insertAdjacentHTML('beforeend', html);
 
   const empty = $('list-empty');
   if (listEl.children.length === 0) {
     const filtered = state.category || state.month || state.q || state.type !== 'all';
-    empty.textContent = filtered ? '没有符合条件的收藏' : '还没有收藏，去网页里右键「Send to Link Saver」吧';
+    empty.textContent = snippetView
+      ? (state.type === 'text'
+        ? '还没有保存的短文本，去网页里选中文字，右键「保存选中文本到 Link Saver」'
+        : '还没有保存的图片，去网页里右键图片，选择「保存图片到 Link Saver」')
+      : filtered
+        ? '没有符合条件的收藏'
+        : '还没有收藏，去网页里右键「Send to Link Saver」吧';
     empty.classList.remove('hidden');
   } else {
     empty.classList.add('hidden');
   }
 
   $('btn-more').classList.toggle('hidden', state.offset >= state.total);
+  if (snippetView) hydrateSnippetImages();
 }
 
 /* ---------------- 侧栏 / 筛选 ---------------- */
@@ -399,10 +465,19 @@ function renderSidebar() {
 
 function renderTypeChips() {
   const tc = state.overview?.typeCounts ?? { site: 0, article: 0 };
+  const sc = state.overview?.snippetCounts ?? { text: 0, image: 0 };
+  const counts = {
+    all: tc.site + tc.article,
+    site: tc.site,
+    article: tc.article,
+    text: sc.text,
+    image: sc.image,
+  };
+  const labels = { all: '全部', site: '网站', article: '文章', text: '短文本', image: '图片' };
   document.querySelectorAll('#type-chips .chip').forEach((chip) => {
     const t = chip.dataset.type;
-    const n = t === 'all' ? tc.site + tc.article : tc[t];
-    chip.textContent = `${t === 'all' ? '全部' : t === 'site' ? '网站' : '文章'}${n ? ` ${n}` : ''}`;
+    const n = counts[t] ?? 0;
+    chip.textContent = `${labels[t] ?? t}${n ? ` ${n}` : ''}`;
     chip.classList.toggle('active', state.type === t && !state.category && !state.month);
   });
 }
@@ -420,6 +495,10 @@ function renderActiveFilters() {
 
 async function applyFilter(patch) {
   Object.assign(state, patch);
+  // 短文本 / 图片没有分类与归档，隐藏侧栏并让内容占满整行
+  const snippetView = isSnippetType(state.type);
+  $('layout').classList.toggle('single-col', snippetView);
+  $('sidebar').classList.toggle('hidden', snippetView);
   renderSidebar();
   renderTypeChips();
   renderActiveFilters();
@@ -489,12 +568,19 @@ function bindEvents() {
     const del = e.target.closest('.item-del');
     if (del) {
       const itemEl = del.closest('.item');
-      if (!confirm('确定删除这条收藏吗？')) return;
+      const isSnippet = itemEl.classList.contains('snippet');
+      if (!confirm(isSnippet ? '确定删除这条内容吗？' : '确定删除这条收藏吗？')) return;
+      const id = itemEl.dataset.id;
       try {
-        await api(`/links/${itemEl.dataset.id}`, { method: 'DELETE' });
+        await api(`/${isSnippet ? 'snippets' : 'links'}/${id}`, { method: 'DELETE' });
         state.total -= 1;
         // 已加载条数同步回退，避免「加载更多」漏掉前移的一条
         if (state.offset > 0) state.offset -= 1;
+        const url = snippetImgUrls.get(id);
+        if (url) {
+          URL.revokeObjectURL(url);
+          snippetImgUrls.delete(id);
+        }
         // 重拉当前视图：同步空状态/加载更多按钮/总数
         await Promise.all([refreshOverview(), loadList(true)]);
       } catch (err) {
@@ -502,8 +588,26 @@ function bindEvents() {
       }
       return;
     }
+    const snipText = e.target.closest('.snip-text');
+    if (snipText) {
+      snipText.classList.toggle('expanded');
+      return;
+    }
+    const thumb = e.target.closest('.snip-thumb');
+    if (thumb && thumb.src) {
+      const box = $('img-lightbox');
+      box.querySelector('img').src = thumb.src;
+      box.classList.remove('hidden');
+      return;
+    }
     const domainEl = e.target.closest('.item-domain');
     if (domainEl) applyFilter({ type: 'site', category: domainEl.dataset.domain, month: '' });
+  });
+
+  $('img-lightbox').addEventListener('click', () => {
+    const box = $('img-lightbox');
+    box.querySelector('img').src = '';
+    box.classList.add('hidden');
   });
 }
 

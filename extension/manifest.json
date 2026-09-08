@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Link Saver",
-  "version": "1.1.0",
-  "description": "一键把网页保存到你的 Link Saver 收藏服务，并快速打开 Web 收藏夹。",
+  "version": "1.2.0",
+  "description": "一键把网页、选中文本或图片保存到你的 Link Saver 收藏服务，并快速打开 Web 收藏夹。",
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAtDLKYGjmNl7jzv4iClKBy2g9nh1wllFXIntqynjDdYzA7qehoIXvdFRSpgn4wlidbyzEXbNAt7NWebSbvA5Nq5NZaLruNRYsM8ww5MmtmGjEtDdx6mbrCa9tkQC+nRNjI+aL11aEyhHnW44cDXsXJjBqcjnG53oTv9u2uv7NFxtTXi+vQBxufb0AKGbA5yYm1QW2np5j9w3VkUJtK+F7R9xFNu0psFpilfcYeEW2KqKAeljymfmQxhTcKkTFVxC+RANBDWrKmWEs9kkKYC3+TIwcDjZUN3fSqyYREL2w240CNEz6teqtjy1IGE1RuNRrG4n3XaxSFBIrMrG2vkCg6QIDAQAB",
   "permissions": ["contextMenus", "storage", "activeTab", "scripting", "notifications"],
   "host_permissions": ["https://link-saver.junwind.site/*"],

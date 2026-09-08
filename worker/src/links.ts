@@ -146,7 +146,7 @@ linkRoutes.get('/', async (c) => {
 
 linkRoutes.get('/overview', async (c) => {
   const userId = c.get('userId');
-  const [typeCounts, categories, months] = await Promise.all([
+  const [typeCounts, categories, months, snippetCounts] = await Promise.all([
     c.env.DB.prepare(`SELECT type, COUNT(*) AS count FROM links WHERE user_id = ? GROUP BY type`).bind(userId).all<{
       type: 'site' | 'article';
       count: number;
@@ -163,13 +163,20 @@ linkRoutes.get('/overview', async (c) => {
     )
       .bind(userId)
       .all<{ month: string; count: number }>(),
+    c.env.DB.prepare(`SELECT type, COUNT(*) AS count FROM snippets WHERE user_id = ? GROUP BY type`).bind(userId).all<{
+      type: 'text' | 'image';
+      count: number;
+    }>(),
   ]);
 
   const counts = { site: 0, article: 0 };
   for (const row of typeCounts.results ?? []) counts[row.type] = row.count;
+  const snips = { text: 0, image: 0 };
+  for (const row of snippetCounts.results ?? []) snips[row.type] = row.count;
   return c.json({
     ok: true,
     typeCounts: counts,
+    snippetCounts: snips,
     categories: categories.results ?? [],
     months: months.results ?? [],
   });
