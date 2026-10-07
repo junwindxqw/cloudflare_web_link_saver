@@ -62,23 +62,24 @@ function inPolygon(px, py, poly) {
 function draw(size) {
   const rgba = Buffer.alloc(size * size * 4);
   const r = size * 0.22; // 圆角半径
-  // 顶部 #5b8cff → 底部 #2458e6 渐变
-  const top = [0x5b, 0x8c, 0xff];
-  const bottom = [0x24, 0x58, 0xe6];
-  // 书签多边形（比例坐标）
+  // 对角线渐变：左上 #6ea8ff → 右下 #1d4ed8
+  const topLeft = [0x6e, 0xa8, 0xff];
+  const bottomRight = [0x1d, 0x4e, 0xd8];
+  // 书签多边形（比例坐标）：更舒展的比例 + 更深的缺口
   const poly = [
-    [0.3, 0.18],
-    [0.7, 0.18],
-    [0.7, 0.82],
-    [0.5, 0.66],
-    [0.3, 0.82],
+    [0.3, 0.16],
+    [0.7, 0.16],
+    [0.7, 0.84],
+    [0.5, 0.68],
+    [0.3, 0.84],
   ].map(([x, y]) => [x * size, y * size]);
 
-  const SS = 2; // 2x2 超采样抗锯齿
+  const SS = 4; // 4x4 超采样抗锯齿
   for (let y = 0; y < size; y++) {
     for (let x = 0; x < size; x++) {
       let bgCov = 0;
       let bmCov = 0;
+      let hiCov = 0;
       for (let sy = 0; sy < SS; sy++) {
         for (let sx = 0; sx < SS; sx++) {
           const px = x + (sx + 0.5) / SS;
@@ -89,17 +90,26 @@ function draw(size) {
           if ((px - cx) ** 2 + (py - cy) ** 2 <= r * r) {
             bgCov++;
             if (inPolygon(px, py, poly)) bmCov++;
+            // 左上角柔光：模拟玻璃高光，增加层次感
+            const hx = px - size * 0.28;
+            const hy = py - size * 0.22;
+            const d = Math.sqrt(hx * hx + hy * hy) / (size * 0.6);
+            if (d < 1) hiCov += 0.22 * (1 - d) * (1 - d);
           }
         }
       }
       const total = SS * SS;
       const bgA = bgCov / total;
       const bmA = bmCov / total;
-      const t = y / Math.max(size - 1, 1);
+      const hiA = hiCov / total;
       const idx = (y * size + x) * 4;
+      // 对角渐变权重：沿 (x+y) 方向
+      const t = Math.min(Math.max((x + y) / (2 * Math.max(size - 1, 1)), 0), 1);
+      const bg = [0, 1, 2].map((i) => topLeft[i] + (bottomRight[i] - topLeft[i]) * t);
+      // 高光叠加到背景（书签区域保持纯白）
+      const mixed = [0, 1, 2].map((i) => bg[i] * (1 - hiA) + 255 * hiA);
       for (let i = 0; i < 3; i++) {
-        const bgc = top[i] + (bottom[i] - top[i]) * t;
-        rgba[idx + i] = Math.round(bgc * (1 - bmA) + 255 * bmA);
+        rgba[idx + i] = Math.round(mixed[i] * (1 - bmA) + 255 * bmA);
       }
       rgba[idx + 3] = Math.round(255 * bgA);
     }

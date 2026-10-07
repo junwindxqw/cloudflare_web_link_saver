@@ -4,6 +4,7 @@
 const EXTENSION_ID = 'ojokkllejggilcghafadekmldpgcmphd';
 
 const TOKEN_KEY = 'ls_token';
+const THEME_KEY = 'ls_theme';
 const PAGE_SIZE = 50;
 
 const state = {
@@ -12,14 +13,20 @@ const state = {
   type: 'all', // all | site | article（链接） | text | image（选中内容）
   category: '',
   month: '',
+  snipMonth: '', // 纯文本 / 图片视图的月份归档筛选
+  days: 0,       // 日期快速筛选（近 N 天，0 = 全部时间）
   q: '',
   offset: 0,
   total: 0,
+  linkOffset: 0,  // 「全部」视图下两个数据源各自的分页游标
+  snipOffset: 0,
   overview: null,
   loading: false,
 };
 
+const DAYS_LABEL = { 1: '近 24 小时', 7: '近 7 天', 30: '近 30 天', 90: '近 90 天' };
 const isSnippetType = (t) => t === 'text' || t === 'image';
+const isSnippetItem = (it) => it.type === 'text' || it.type === 'image';
 
 // 已转存图片需要带凭证读取，objectURL 按条目缓存，删除时释放
 const snippetImgUrls = new Map();
@@ -293,16 +300,37 @@ async function refreshOverview() {
 async function loadList(reset = false) {
   if (state.loading) return;
   state.loading = true;
-  const offset = reset ? 0 : state.offset;
   try {
-    const params = new URLSearchParams({ type: state.type, limit: String(PAGE_SIZE), offset: String(offset) });
-    if (state.q) params.set('q', state.q);
-    const data = isSnippetType(state.type)
-      ? await api(`/snippets?${params}`)
-      : await api(`/links?${withLinkParams(params)}`);
-    state.total = data.total;
-    state.offset = offset + data.items.length;
-    renderList(data.items, reset);
+    if (state.type === 'all') {
+      // 全部 = 链接 + 选中内容两个数据源并行分页，按时间归并
+      const lOffset = reset ? 0 : state.linkOffset;
+      const sOffset = reset ? 0 : state.snipOffset;
+      const [lData, sData] = await Promise.all([
+        api(`/links?${listQs({ type: 'all', limit: PAGE_SIZE, offset: lOffset })}`),
+        api(`/snippets?${listQs({ limit: PAGE_SIZE, offset: sOffset })}`),
+      ]);
+      state.linkTotal = lData.total;
+      state.snipTotal = sData.total;
+      state.linkOffset = lOffset + lData.items.length;
+      state.snipOffset = sOffset + sData.items.length;
+      state.total = lData.total + sData.total;
+      state.offset = state.linkOffset + state.snipOffset;
+      const merged = [...lData.items, ...sData.items].sort((a, b) =>
+        (b.created_at || '').localeCompare(a.created_at || '') || (b.id - a.id));
+      renderList(merged, reset);
+    } else if (isSnippetType(state.type)) {
+      const offset = reset ? 0 : state.offset;
+      const data = await api(`/snippets?${listQs({ type: state.type, limit: PAGE_SIZE, offset })}`);
+      state.total = data.total;
+      state.offset = offset + data.items.length;
+      renderList(data.items, reset);
+    } else {
+      const offset = reset ? 0 : state.offset;
+      const data = await api(`/links?${listQs({ type: state.type, limit: PAGE_SIZE, offset })}`);
+      state.total = data.total;
+      state.offset = offset + data.items.length;
+      renderList(data.items, reset);
+    }
   } catch (e) {
     if (e.status === 401) return logout();
     showToast(e.message);
@@ -311,10 +339,17 @@ async function loadList(reset = false) {
   }
 }
 
-// 网站分类 / 月份归档仅对链接生效
-function withLinkParams(params) {
-  if (state.category) params.set('category', state.category);
-  if (state.month) params.set('month', state.month);
+// 列表接口公共筛选参数（搜索 / 日期 / 片段月份）；分类与文章月份仅链接支持
+function listQs(base) {
+  const params = new URLSearchParams(base);
+  if (state.q) params.set('q', state.q);
+  if (state.days) params.set('days', String(state.days));
+  if (isSnippetType(state.type)) {
+    if (state.snipMonth) params.set('month', state.snipMonth);
+  } else {
+    if (state.category) params.set('category', state.category);
+    if (state.month) params.set('month', state.month);
+  }
   return params;
 }
 
@@ -361,7 +396,7 @@ function itemHtml(it) {
 }
 
 function snippetHtml(it) {
-  const badge = it.type === 'image' ? '<span class="badge image">图片</span>' : '<span class="badge text">短文本</span>';
+  const badge = it.type === 'image' ? '<span class="badge image">图片</span>' : '<span class="badge text">纯文本</span>';
   let body;
   if (it.type === 'image') {
     // 已转存的图片走带凭证的接口；转存失败的直接用原始外链
@@ -410,7 +445,6 @@ function renderList(items, reset) {
   const listEl = $('list');
   if (reset) listEl.innerHTML = '';
 
-  const snippetView = isSnippetType(state.type);
   let html = '';
   let lastMonth = null;
   // 文章视图按月份归档展示
@@ -423,16 +457,16 @@ function renderList(items, reset) {
         lastMonth = m;
       }
     }
-    html += snippetView ? snippetHtml(it) : itemHtml(it);
+    html += isSnippetItem(it) ? snippetHtml(it) : itemHtml(it);
   }
   listEl.insertAdjacentHTML('beforeend', html);
 
   const empty = $('list-empty');
   if (listEl.children.length === 0) {
-    const filtered = state.category || state.month || state.q || state.type !== 'all';
-    empty.textContent = snippetView
+    const filtered = state.category || state.month || state.snipMonth || state.q || state.days || state.type !== 'all';
+    empty.textContent = isSnippetType(state.type)
       ? (state.type === 'text'
-        ? '还没有保存的短文本，去网页里选中文字，右键「保存选中文本到 Link Saver」'
+        ? '还没有保存的纯文本，去网页里选中文字，右键「保存选中文本到 Link Saver」'
         : '还没有保存的图片，去网页里右键图片，选择「保存图片到 Link Saver」')
       : filtered
         ? '没有符合条件的收藏'
@@ -443,14 +477,29 @@ function renderList(items, reset) {
   }
 
   $('btn-more').classList.toggle('hidden', state.offset >= state.total);
-  if (snippetView) hydrateSnippetImages();
+  hydrateSnippetImages();
 }
 
 /* ---------------- 侧栏 / 筛选 ---------------- */
 
+function monthBtns(list, stype) {
+  return list.length
+    ? list.map((m) => `<button class="side-item${state.snipMonth === m.month && state.type === stype ? ' active' : ''}" data-smonth="${esc(m.month)}" data-stype="${stype}">
+        <span class="side-name">${esc(monthLabel(m.month))}</span><span class="side-count">${m.count}</span></button>`).join('')
+    : '<div class="side-empty">暂无内容</div>';
+}
+
 function renderSidebar() {
   const cats = state.overview?.categories ?? [];
   const months = state.overview?.months ?? [];
+  const textMonths = state.overview?.textMonths ?? [];
+  const imageMonths = state.overview?.imageMonths ?? [];
+
+  // 四个侧栏板块常驻（与文章归档一致），点击月份归档会切换到对应视图
+  $('sec-site-cats').classList.remove('hidden');
+  $('sec-article-months').classList.remove('hidden');
+  $('sec-text-months').classList.remove('hidden');
+  $('sec-image-months').classList.remove('hidden');
 
   $('site-cats').innerHTML = cats.length
     ? cats.map((c) => `<button class="side-item${state.category === c.name ? ' active' : ''}" data-cat="${esc(c.name)}">
@@ -461,19 +510,22 @@ function renderSidebar() {
     ? months.map((m) => `<button class="side-item${state.month === m.month ? ' active' : ''}" data-month="${esc(m.month)}">
         <span class="side-name">${esc(monthLabel(m.month))}</span><span class="side-count">${m.count}</span></button>`).join('')
     : '<div class="side-empty">暂无文章</div>';
+
+  $('text-month-list').innerHTML = monthBtns(textMonths, 'text');
+  $('image-month-list').innerHTML = monthBtns(imageMonths, 'image');
 }
 
 function renderTypeChips() {
   const tc = state.overview?.typeCounts ?? { site: 0, article: 0 };
   const sc = state.overview?.snippetCounts ?? { text: 0, image: 0 };
   const counts = {
-    all: tc.site + tc.article,
+    all: tc.site + tc.article + sc.text + sc.image,
     site: tc.site,
     article: tc.article,
     text: sc.text,
     image: sc.image,
   };
-  const labels = { all: '全部', site: '网站', article: '文章', text: '短文本', image: '图片' };
+  const labels = { all: '全部', site: '网站', article: '文章', text: '纯文本', image: '图片' };
   document.querySelectorAll('#type-chips .chip').forEach((chip) => {
     const t = chip.dataset.type;
     const n = counts[t] ?? 0;
@@ -487,6 +539,8 @@ function renderActiveFilters() {
   const tags = [];
   if (state.category) tags.push({ key: 'category', label: `网站：${state.category}` });
   if (state.month) tags.push({ key: 'month', label: `归档：${monthLabel(state.month)}` });
+  if (state.snipMonth) tags.push({ key: 'snipMonth', label: `归档：${monthLabel(state.snipMonth)}` });
+  if (state.days) tags.push({ key: 'days', label: `时间：${DAYS_LABEL[state.days] || `近 ${state.days} 天`}` });
   if (state.q) tags.push({ key: 'q', label: `搜索：${state.q}` });
   box.innerHTML = tags
     .map((t) => `<span class="filter-tag">${esc(t.label)}<button data-clear="${t.key}" aria-label="移除筛选">✕</button></span>`)
@@ -495,10 +549,6 @@ function renderActiveFilters() {
 
 async function applyFilter(patch) {
   Object.assign(state, patch);
-  // 短文本 / 图片没有分类与归档，隐藏侧栏并让内容占满整行
-  const snippetView = isSnippetType(state.type);
-  $('layout').classList.toggle('single-col', snippetView);
-  $('sidebar').classList.toggle('hidden', snippetView);
   renderSidebar();
   renderTypeChips();
   renderActiveFilters();
@@ -540,7 +590,7 @@ function bindEvents() {
   $('type-chips').addEventListener('click', (e) => {
     const chip = e.target.closest('.chip');
     if (!chip) return;
-    applyFilter({ type: chip.dataset.type, category: '', month: '' });
+    applyFilter({ type: chip.dataset.type, category: '', month: '', snipMonth: '' });
   });
 
   $('sidebar').addEventListener('click', (e) => {
@@ -548,12 +598,22 @@ function bindEvents() {
     if (cat) return applyFilter({ type: 'site', category: state.category === cat.dataset.cat ? '' : cat.dataset.cat, month: '' });
     const month = e.target.closest('[data-month]');
     if (month) return applyFilter({ type: 'article', month: state.month === month.dataset.month ? '' : month.dataset.month, category: '' });
+    const smonth = e.target.closest('[data-smonth]');
+    if (smonth) {
+      // 点击纯文本/图片的月份归档：切换到对应视图并按月份筛选，再点一次取消筛选
+      const toggle = state.snipMonth === smonth.dataset.smonth && state.type === smonth.dataset.stype ? '' : smonth.dataset.smonth;
+      return applyFilter({ type: smonth.dataset.stype, snipMonth: toggle, category: '', month: '' });
+    }
   });
 
   $('active-filters').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-clear]');
     if (!btn) return;
-    applyFilter({ [btn.dataset.clear]: '' });
+    applyFilter({ [btn.dataset.clear]: btn.dataset.clear === 'days' ? 0 : '' });
+  });
+
+  $('date-select').addEventListener('change', (e) => {
+    applyFilter({ days: Number(e.target.value) || 0 });
   });
 
   let searchTimer = null;
@@ -609,7 +669,28 @@ function bindEvents() {
     box.querySelector('img').src = '';
     box.classList.add('hidden');
   });
+
+  $('btn-theme').addEventListener('click', () => {
+    const next = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+    localStorage.setItem(THEME_KEY, next);
+    applyTheme(next);
+  });
+}
+
+/* ---------------- 暗黑模式 ---------------- */
+
+function applyTheme(mode) {
+  document.documentElement.dataset.theme = mode;
+  const btn = $('btn-theme');
+  if (btn) btn.textContent = mode === 'dark' ? '☀️' : '🌙';
+}
+
+function initTheme() {
+  const saved = localStorage.getItem(THEME_KEY);
+  const dark = saved ? saved === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
+  applyTheme(dark ? 'dark' : 'light');
 }
 
 bindEvents();
+initTheme();
 bootstrap();

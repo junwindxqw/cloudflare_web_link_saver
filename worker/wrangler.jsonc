@@ -25,6 +25,13 @@
       "id": "c9a2e5f1d5b1423c91f8a3a05e24e84e"
     }
   ],
+  "r2_buckets": [
+    // 转存图片的对象存储（免费档 10GB）；R2 不可用时自动回退 KV
+    {
+      "binding": "MEDIA",
+      "bucket_name": "link-saver-media"
+    }
+  ],
   "vars": {
     "WEB_ORIGIN": "https://link-saver.junwind.site",
     "MAIL_FROM": "Link Saver <noreply@junwind.site>"

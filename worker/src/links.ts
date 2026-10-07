@@ -88,6 +88,7 @@ linkRoutes.get('/', async (c) => {
   const type = c.req.query('type') || 'all';
   const category = c.req.query('category')?.trim() || '';
   const month = c.req.query('month')?.trim() || '';
+  const days = Math.min(Math.max(Number(c.req.query('days')) || 0, 0), 3650);
   const q = c.req.query('q')?.trim() || '';
   const limit = Math.min(Math.max(Number(c.req.query('limit')) || 50, 1), 100);
   const offset = Math.max(Number(c.req.query('offset')) || 0, 0);
@@ -105,6 +106,10 @@ linkRoutes.get('/', async (c) => {
   if (month) {
     where.push("strftime('%Y-%m', created_at) = ?");
     binds.push(month);
+  }
+  if (days > 0) {
+    where.push("created_at >= datetime('now', ?)");
+    binds.push(`-${days} days`);
   }
   if (q) {
     // 转义 LIKE 通配符，让 %/_ 按字面匹配
@@ -146,7 +151,7 @@ linkRoutes.get('/', async (c) => {
 
 linkRoutes.get('/overview', async (c) => {
   const userId = c.get('userId');
-  const [typeCounts, categories, months, snippetCounts] = await Promise.all([
+  const [typeCounts, categories, months, snippetCounts, textMonths, imageMonths] = await Promise.all([
     c.env.DB.prepare(`SELECT type, COUNT(*) AS count FROM links WHERE user_id = ? GROUP BY type`).bind(userId).all<{
       type: 'site' | 'article';
       count: number;
@@ -167,6 +172,18 @@ linkRoutes.get('/overview', async (c) => {
       type: 'text' | 'image';
       count: number;
     }>(),
+    c.env.DB.prepare(
+      `SELECT strftime('%Y-%m', created_at) AS month, COUNT(*) AS count FROM snippets WHERE user_id = ? AND type = 'text'
+       GROUP BY month ORDER BY month DESC LIMIT 120`,
+    )
+      .bind(userId)
+      .all<{ month: string; count: number }>(),
+    c.env.DB.prepare(
+      `SELECT strftime('%Y-%m', created_at) AS month, COUNT(*) AS count FROM snippets WHERE user_id = ? AND type = 'image'
+       GROUP BY month ORDER BY month DESC LIMIT 120`,
+    )
+      .bind(userId)
+      .all<{ month: string; count: number }>(),
   ]);
 
   const counts = { site: 0, article: 0 };
@@ -179,6 +196,8 @@ linkRoutes.get('/overview', async (c) => {
     snippetCounts: snips,
     categories: categories.results ?? [],
     months: months.results ?? [],
+    textMonths: textMonths.results ?? [],
+    imageMonths: imageMonths.results ?? [],
   });
 });
 

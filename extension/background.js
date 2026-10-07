@@ -1,5 +1,6 @@
 import { API_BASE, WEB_ORIGIN } from './config.js';
 
+const MENU_ROOT = 'ls-root';
 const MENU_SAVE = 'ls-save';
 const MENU_SAVE_SELECTION = 'ls-save-selection';
 const MENU_SAVE_IMAGE = 'ls-save-image';
@@ -8,10 +9,36 @@ const MAX_TEXT_CHARS = 10000;
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
-    chrome.contextMenus.create({ id: MENU_SAVE, title: 'Send to Link Saver', contexts: ['page', 'link'] });
-    chrome.contextMenus.create({ id: MENU_SAVE_SELECTION, title: '保存选中文本到 Link Saver', contexts: ['selection'] });
-    chrome.contextMenus.create({ id: MENU_SAVE_IMAGE, title: '保存图片到 Link Saver', contexts: ['image'] });
-    chrome.contextMenus.create({ id: MENU_OPEN, title: 'Open Link Saver Web', contexts: ['page'] });
+    // 只保留一个一级菜单，具体动作收进子菜单
+    chrome.contextMenus.create({
+      id: MENU_ROOT,
+      title: 'Send to Link Saver',
+      contexts: ['page', 'link', 'selection', 'image'],
+    });
+    chrome.contextMenus.create({
+      id: MENU_SAVE,
+      parentId: MENU_ROOT,
+      title: '保存此页面 / 链接',
+      contexts: ['page', 'link'],
+    });
+    chrome.contextMenus.create({
+      id: MENU_SAVE_SELECTION,
+      parentId: MENU_ROOT,
+      title: '保存选中的文本',
+      contexts: ['selection'],
+    });
+    chrome.contextMenus.create({
+      id: MENU_SAVE_IMAGE,
+      parentId: MENU_ROOT,
+      title: '保存此图片',
+      contexts: ['image'],
+    });
+    chrome.contextMenus.create({
+      id: MENU_OPEN,
+      parentId: MENU_ROOT,
+      title: '打开网页收藏夹',
+      contexts: ['page', 'link', 'selection', 'image'],
+    });
   });
 });
 

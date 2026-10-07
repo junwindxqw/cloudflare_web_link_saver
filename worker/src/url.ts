@@ -69,16 +69,41 @@ function isTrackingParam(key: string): boolean {
   return k.startsWith('utm_') || TRACKING_PARAMS.has(k);
 }
 
-export function classifyUrl(u: URL): Classification {
-  const domain = u.hostname.toLowerCase();
+/**
+ * 主机名归一：小写 + 去掉 www. 前缀（剩余部分仍含点才去，避免把 www.gov.uk 这类
+ * 本身以 www 开头的特殊域名错误剥离到只剩裸域）。www 与裸域视为同一网址，防止重复收藏。
+ */
+export function normalizeHost(hostname: string): string {
+  let h = hostname.toLowerCase().replace(/\.$/, '');
+  if (h.startsWith('www.')) {
+    const rest = h.slice(4);
+    if (rest.includes('.')) h = rest;
+  }
+  return h;
+}
+
+export function classifyUrl(input: URL): Classification {
+  // 就地归一主机名，调用方随后使用的 u.origin 也与 canonical 保持一致
+  const u = input;
+  u.hostname = normalizeHost(u.hostname);
+  const domain = u.hostname;
+
   if (u.pathname === '' || u.pathname === '/') {
     return { type: 'site', category: domain, domain, canonical: u.origin + '/' };
   }
   // 归一化：剥离锚点与常见追踪参数，避免同一文章因入口不同存成多条
   u.hash = '';
-  for (const key of [...u.searchParams.keys()]) {
-    if (isTrackingParam(key)) u.searchParams.delete(key);
+  const kept: Array<[string, string]> = [];
+  for (const key of new Set([...u.searchParams.keys()])) {
+    if (isTrackingParam(key)) continue;
+    for (const v of u.searchParams.getAll(key)) kept.push([key, v]);
   }
+  // 参数按名称+值排序：顺序不同视为同一网址
+  kept.sort((a, b) => (a[0] === b[0] ? (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0) : a[0] < b[0] ? -1 : 1));
+  u.search = '';
+  for (const [k, v] of kept) u.searchParams.append(k, v);
+  // 路径尾部斜杠归一：/a/b/ 与 /a/b 视为同一文章
+  u.pathname = u.pathname.replace(/\/+$/, '') || '/';
   return { type: 'article', category: ARTICLE_CATEGORY, domain, canonical: u.toString() };
 }
 

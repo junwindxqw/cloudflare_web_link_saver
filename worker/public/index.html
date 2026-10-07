@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Link Saver · 收藏夹</title>
   <meta name="description" content="Link Saver —— 你的网页收藏服务" />
-  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48'%3E%3Crect width='48' height='48' rx='10' fill='%232563eb'/%3E%3Cpath d='M16 10h16v28l-8-7-8 7z' fill='%23fff'/%3E%3C/svg%3E" />
+  <link rel="icon" type="image/png" href="/logo.png" />
   <link rel="stylesheet" href="/app.css" />
 </head>
 <body>
@@ -13,7 +13,7 @@
   <div id="login-view" class="login-view hidden">
     <div class="login-card">
       <div class="brand">
-        <span class="brand-icon">🔖</span>
+        <img class="brand-icon" src="/logo.png" width="44" height="44" alt="" />
         <h1>Link Saver</h1>
         <p class="brand-sub">登录后查看你的全部收藏</p>
       </div>
@@ -102,9 +102,10 @@
   <div id="app-view" class="app-view hidden">
     <header class="topbar">
       <div class="topbar-inner">
-        <div class="logo"><span class="logo-icon">🔖</span><span class="logo-text">Link Saver</span></div>
+        <div class="logo"><img class="logo-icon" src="/logo.png" width="22" height="22" alt="" /><span class="logo-text">Link Saver</span></div>
         <div class="topbar-right">
           <span id="user-email" class="user-email"></span>
+          <button id="btn-theme" class="btn-ghost btn-theme" type="button" title="切换深色 / 浅色模式" aria-label="切换深色 / 浅色模式">🌙</button>
           <button id="btn-logout" class="btn-ghost">退出</button>
         </div>
       </div>
@@ -112,13 +113,21 @@
 
     <div class="layout" id="layout">
       <aside class="sidebar" id="sidebar">
-        <section class="side-section">
+        <section class="side-section" id="sec-site-cats">
           <h2>网站分类</h2>
           <div id="site-cats" class="side-list"></div>
         </section>
-        <section class="side-section">
+        <section class="side-section" id="sec-article-months">
           <h2>文章归档</h2>
           <div id="month-list" class="side-list"></div>
+        </section>
+        <section class="side-section hidden" id="sec-text-months">
+          <h2>纯文本归档</h2>
+          <div id="text-month-list" class="side-list"></div>
+        </section>
+        <section class="side-section hidden" id="sec-image-months">
+          <h2>图片归档</h2>
+          <div id="image-month-list" class="side-list"></div>
         </section>
       </aside>
 
@@ -128,12 +137,21 @@
             <button class="chip active" data-type="all">全部</button>
             <button class="chip" data-type="site">网站</button>
             <button class="chip" data-type="article">文章</button>
-            <button class="chip" data-type="text">短文本</button>
+            <button class="chip" data-type="text">纯文本</button>
             <button class="chip" data-type="image">图片</button>
           </div>
+        </div>
+        <div class="filters-row">
           <div class="search">
             <input id="search-input" type="search" placeholder="搜索标题、网址或内容…" />
           </div>
+          <select id="date-select" class="date-select" aria-label="按日期筛选">
+            <option value="0">全部时间</option>
+            <option value="1">近 24 小时</option>
+            <option value="7">近 7 天</option>
+            <option value="30">近 30 天</option>
+            <option value="90">近 90 天</option>
+          </select>
         </div>
 
         <div id="active-filters" class="active-filters"></div>
