@@ -245,6 +245,9 @@ authRoutes.post('/reset-password', async (c) => {
 
 // ---- 修改密码（已登录状态；未设置过密码的账号可直接设置）----
 
+const CHANGE_FAIL_LIMIT = 5;
+const CHANGE_FAIL_TTL = 900;
+
 authRoutes.post('/change-password', requireAuth, async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const pwError = validatePassword(body.new_password);
@@ -260,9 +263,22 @@ authRoutes.post('/change-password', requireAuth, async (c) => {
   if (hadPassword) {
     const oldPassword = typeof body.old_password === 'string' ? body.old_password : '';
     if (!oldPassword) return c.json({ error: '请输入当前密码' }, 400);
-    if (!(await verifyPassword(oldPassword, storedHash))) {
-      return c.json({ error: '当前密码不正确' }, 400);
+    // 防爆破：同账号连续验证旧密码失败即锁定（与密码登录同一策略）
+    const failKey = `pwchg:fail:${c.get('userId')}`;
+    const failsRaw = await c.env.KV.get(failKey);
+    const fails = failsRaw ? (JSON.parse(failsRaw) as { count: number }) : { count: 0 };
+    if (fails.count >= CHANGE_FAIL_LIMIT) {
+      return c.json({ error: '尝试次数过多，请 15 分钟后再试' }, 429);
     }
+    if (!(await verifyPassword(oldPassword, storedHash))) {
+      const count = fails.count + 1;
+      await c.env.KV.put(failKey, JSON.stringify({ count }), { expirationTtl: CHANGE_FAIL_TTL });
+      return c.json(
+        { error: count >= CHANGE_FAIL_LIMIT ? '尝试次数过多，请 15 分钟后再试' : '当前密码不正确' },
+        count >= CHANGE_FAIL_LIMIT ? 429 : 400,
+      );
+    }
+    await c.env.KV.delete(failKey).catch(() => {});
   }
 
   const passwordHash = await hashPassword(body.new_password as string);

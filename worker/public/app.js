@@ -752,6 +752,7 @@ function bindEvents() {
       $('btn-passwd').textContent = '修改密码';
       showToast(data.message || '密码已修改');
     } catch (e) {
+      if (e.status === 401) return logout();
       setPwMsg(e.message);
     }
   });
