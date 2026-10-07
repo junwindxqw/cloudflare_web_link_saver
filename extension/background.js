@@ -1,42 +1,14 @@
 import { API_BASE, WEB_ORIGIN } from './config.js';
 
-const MENU_ROOT = 'ls-root';
 const MENU_SAVE = 'ls-save';
-const MENU_SAVE_SELECTION = 'ls-save-selection';
-const MENU_SAVE_IMAGE = 'ls-save-image';
-const MENU_OPEN = 'ls-open';
 const MAX_TEXT_CHARS = 10000;
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.removeAll(() => {
-    // 只保留一个一级菜单，具体动作收进子菜单
-    chrome.contextMenus.create({
-      id: MENU_ROOT,
-      title: 'Send to Link Saver',
-      contexts: ['page', 'link', 'selection', 'image'],
-    });
+    // 唯一的右键菜单项：按右键对象智能保存（页面/链接/选中文本/图片）
     chrome.contextMenus.create({
       id: MENU_SAVE,
-      parentId: MENU_ROOT,
-      title: '保存此页面 / 链接',
-      contexts: ['page', 'link'],
-    });
-    chrome.contextMenus.create({
-      id: MENU_SAVE_SELECTION,
-      parentId: MENU_ROOT,
-      title: '保存选中的文本',
-      contexts: ['selection'],
-    });
-    chrome.contextMenus.create({
-      id: MENU_SAVE_IMAGE,
-      parentId: MENU_ROOT,
-      title: '保存此图片',
-      contexts: ['image'],
-    });
-    chrome.contextMenus.create({
-      id: MENU_OPEN,
-      parentId: MENU_ROOT,
-      title: '打开网页收藏夹',
+      title: 'Send to Link Saver',
       contexts: ['page', 'link', 'selection', 'image'],
     });
   });
@@ -140,19 +112,17 @@ async function saveImage(srcUrl, pageUrl, pageTitle) {
 }
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
-  if (info.menuItemId === MENU_OPEN) {
-    chrome.tabs.create({ url: WEB_ORIGIN });
-    return;
-  }
-  if (info.menuItemId === MENU_SAVE_SELECTION) {
-    await saveSelection(info.selectionText, info.pageUrl || tab?.url || '', tab?.title || '');
-    return;
-  }
-  if (info.menuItemId === MENU_SAVE_IMAGE) {
+  if (info.menuItemId !== MENU_SAVE) return;
+
+  // 智能保存：按右键对象决定保存什么（图片 > 选中文本 > 链接/页面）
+  if (info.mediaType === 'image' && info.srcUrl) {
     await saveImage(info.srcUrl, info.pageUrl || tab?.url || '', tab?.title || '');
     return;
   }
-  if (info.menuItemId !== MENU_SAVE) return;
+  if (info.selectionText) {
+    await saveSelection(info.selectionText, info.pageUrl || tab?.url || '', tab?.title || '');
+    return;
+  }
 
   const url = info.linkUrl || info.pageUrl || tab?.url || '';
   let title = tab?.title || '';
