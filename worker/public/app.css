@@ -411,6 +411,7 @@ button { font-family: inherit; }
   align-items: center;
   gap: 3px;
   font-size: 11px;
+  font-family: inherit;
   border-radius: 4px;
   padding: 1px 6px;
   background: #fff7ed;
@@ -420,8 +421,27 @@ button { font-family: inherit; }
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  border: none;
+  cursor: pointer;
 }
 [data-theme="dark"] .item-note { background: #3a2a14; color: #fdba74; }
+.item-note:hover { filter: brightness(0.96); }
+/* 无备注时的「＋ 备注」：悬停条目才显示，触屏设备常显 */
+.item-note.add { opacity: 0; }
+.item:hover .item-note.add { opacity: 1; }
+.item-note.add:focus-visible { opacity: 1; }
+@media (hover: none) { .item-note.add { opacity: 0.65; } }
+.note-input {
+  font-family: inherit;
+  font-size: 12px;
+  color: var(--text);
+  background: var(--card);
+  border: 1px solid var(--primary);
+  border-radius: 6px;
+  padding: 2px 8px;
+  width: 180px;
+  outline: none;
+}
 .item-domain { cursor: pointer; }
 .item-domain:hover { color: var(--primary); }
 .item-del {

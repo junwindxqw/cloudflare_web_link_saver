@@ -429,7 +429,9 @@ function itemHtml(it) {
   const domain = it.type === 'article'
     ? `<span class="item-domain" data-domain="${esc(it.domain)}" title="查看该网站分类">${esc(it.domain)}</span>`
     : esc(it.domain);
-  const note = it.note ? `<span class="item-note" title="备注">🏷 ${esc(it.note)}</span>` : '';
+  const note = it.note
+    ? `<button class="item-note" data-note-edit data-note="${esc(it.note)}" title="点击编辑备注">🏷 ${esc(it.note)}</button>`
+    : `<button class="item-note add" data-note-edit data-note="" title="添加备注">＋ 备注</button>`;
   return `<div class="item" data-id="${it.id}">
     ${faviconHtml(it.domain)}
     <div class="item-main">
@@ -698,6 +700,11 @@ function bindEvents() {
       snipText.classList.toggle('expanded');
       return;
     }
+    const noteChip = e.target.closest('[data-note-edit]');
+    if (noteChip) {
+      startNoteEdit(noteChip);
+      return;
+    }
     const thumb = e.target.closest('.snip-thumb');
     if (thumb && thumb.src) {
       const box = $('img-lightbox');
@@ -762,6 +769,50 @@ function setPwMsg(text, info = false) {
   const el = $('pw-msg');
   el.textContent = text || '';
   el.classList.toggle('info', info);
+}
+
+/* ---------------- 备注编辑 ---------------- */
+
+// 点击备注标签 → 就地变为输入框：Enter 保存、Esc 取消、失焦取消
+function startNoteEdit(chip) {
+  const itemEl = chip.closest('.item');
+  const id = itemEl?.dataset.id;
+  if (!id) return;
+  const current = chip.dataset.note || '';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'note-input';
+  input.value = current;
+  input.maxLength = 100;
+  input.placeholder = '备注名称（留空清除）';
+  chip.replaceWith(input);
+  input.focus();
+  input.select();
+
+  let settled = false;
+  const finish = (save) => {
+    if (settled) return;
+    settled = true;
+    const val = input.value.trim();
+    input.replaceWith(chip);
+    if (!save || val === current) return;
+    api(`/links/${id}`, { method: 'PATCH', body: { note: val } })
+      .then((data) => {
+        chip.dataset.note = data.note;
+        chip.textContent = data.note ? `🏷 ${data.note}` : '＋ 备注';
+        chip.classList.toggle('add', !data.note);
+      })
+      .catch((e) => {
+        if (e.status === 401) return logout();
+        showToast(e.message);
+      });
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') finish(true);
+    else if (e.key === 'Escape') finish(false);
+  });
+  input.addEventListener('blur', () => finish(false));
 }
 
 /* ---------------- 暗黑模式 ---------------- */

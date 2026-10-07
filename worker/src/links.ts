@@ -205,6 +205,20 @@ linkRoutes.get('/overview', async (c) => {
   });
 });
 
+// 网页端编辑备注（留空即清除）
+linkRoutes.patch('/:id', async (c) => {
+  const id = Number(c.req.param('id'));
+  if (!Number.isInteger(id) || id <= 0) return c.json({ error: '参数不正确' }, 400);
+  const body = await c.req.json().catch(() => ({}));
+  if (typeof body.note !== 'string') return c.json({ error: '缺少 note 参数' }, 400);
+  const note = body.note.replace(/\s+/g, ' ').trim().slice(0, 200);
+  const result = await c.env.DB.prepare('UPDATE links SET note = ? WHERE id = ? AND user_id = ?')
+    .bind(note, id, c.get('userId'))
+    .run();
+  if (!result.meta.changes) return c.json({ error: '记录不存在' }, 404);
+  return c.json({ ok: true, note });
+});
+
 linkRoutes.delete('/:id', async (c) => {
   const id = Number(c.req.param('id'));
   if (!Number.isInteger(id) || id <= 0) return c.json({ error: '参数不正确' }, 400);
