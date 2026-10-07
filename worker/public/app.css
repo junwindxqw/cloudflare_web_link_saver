@@ -505,6 +505,30 @@ button { font-family: inherit; }
 }
 .btn-more:hover { color: var(--primary); border-color: var(--primary); }
 
+/* ---------- 修改密码弹窗 ---------- */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 150;
+  background: rgba(15, 23, 42, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+.modal-card {
+  width: 100%;
+  max-width: 360px;
+  background: var(--card);
+  border-radius: 14px;
+  padding: 24px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+.modal-title { margin: 0 0 16px; font-size: 17px; color: var(--text); }
+.modal-actions { display: flex; gap: 10px; margin-top: 4px; }
+.modal-actions .btn-ghost { flex: 1; margin: 0; padding: 9px; }
+.btn-pw-save { flex: 2; margin: 0; }
+
 /* ---------- Toast ---------- */
 .toast {
   position: fixed;

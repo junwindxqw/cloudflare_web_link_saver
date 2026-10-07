@@ -67,6 +67,36 @@ body {
 .popup-note a { color: #2563eb; text-decoration: none; }
 .popup-note a:hover { text-decoration: underline; }
 
+/* 验证码输入行：输入框 + 右侧发送按钮 */
+.code-input { display: flex; gap: 6px; align-items: stretch; }
+.code-input input {
+  flex: 1;
+  min-width: 0;
+  letter-spacing: 3px;
+  padding: 8px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  font-size: 14px;
+  outline: none;
+  background: #fff;
+  box-sizing: border-box;
+}
+.code-input input:focus { border-color: #2563eb; }
+.btn-send {
+  flex-shrink: 0;
+  border: 1px solid #2563eb;
+  background: #eff6ff;
+  color: #2563eb;
+  border-radius: 8px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.btn-send:hover { background: #dbeafe; }
+.btn-send:disabled { border-color: #d1d5db; background: #f3f4f6; color: #9ca3af; cursor: default; }
+
 .btn-primary {
   width: 100%;
   padding: 9px;

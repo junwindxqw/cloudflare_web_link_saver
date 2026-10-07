@@ -25,6 +25,7 @@ const state = {
   overview: null,
   loading: false,
   pendingReset: false,
+  hasPassword: false,
 };
 
 const DAYS_LABEL = { 1: '近 24 小时', 7: '近 7 天', 30: '近 30 天', 90: '近 90 天' };
@@ -215,6 +216,7 @@ async function loginWithOtt(ott) {
   try {
     const data = await api('/sso/exchange', { method: 'POST', body: { ott }, auth: false });
     enterApp(data.token, data.email);
+    api('/auth/me').then(applyAccountInfo).catch(() => {});
     return true;
   } catch {
     return false;
@@ -263,6 +265,15 @@ function enterApp(token, email) {
   loadList(true);
 }
 
+// /auth/me 之后调用：记录账号是否已设置密码（决定「设置密码」还是「修改密码」）
+function applyAccountInfo(me) {
+  if (!me) return;
+  state.email = me.email || state.email;
+  state.hasPassword = Boolean(me.hasPassword);
+  $('user-email').textContent = state.email;
+  $('btn-passwd').textContent = state.hasPassword ? '修改密码' : '设置密码';
+}
+
 async function bootstrap() {
   // 0. 网页端点过退出：保持退出状态，跳过一切自动登录（URL 令牌 / 扩展 SSO），
   //    直到在网页端重新登录。插件本身的登录态不受影响。
@@ -283,6 +294,7 @@ async function bootstrap() {
   if (state.token) {
     try {
       const me = await api('/auth/me');
+      applyAccountInfo(me);
       enterApp(state.token, me.email);
       return;
     } catch (e) {
@@ -710,6 +722,47 @@ function bindEvents() {
     localStorage.setItem(THEME_KEY, next);
     applyTheme(next);
   });
+
+  // 修改密码弹窗
+  $('btn-passwd').addEventListener('click', () => {
+    $('pw-modal-title').textContent = state.hasPassword ? '修改密码' : '设置密码';
+    $('pw-old-row').classList.toggle('hidden', !state.hasPassword);
+    $('pw-old').value = '';
+    $('pw-new').value = '';
+    $('pw-new2').value = '';
+    setPwMsg('');
+    $('pw-modal').classList.remove('hidden');
+    (state.hasPassword ? $('pw-old') : $('pw-new')).focus();
+  });
+  const closePwModal = () => $('pw-modal').classList.add('hidden');
+  $('btn-pw-cancel').addEventListener('click', closePwModal);
+  $('pw-modal').addEventListener('click', (e) => { if (e.target === $('pw-modal')) closePwModal(); });
+  $('pw-new2').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btn-pw-save').click(); });
+  $('btn-pw-save').addEventListener('click', async () => {
+    const oldPw = $('pw-old').value;
+    const newPw = $('pw-new').value;
+    if (state.hasPassword && !oldPw) return setPwMsg('请输入当前密码');
+    if (!newPw) return setPwMsg('请输入新密码');
+    if (newPw !== $('pw-new2').value) return setPwMsg('两次输入的新密码不一致');
+    setPwMsg('正在保存…', true);
+    try {
+      const data = await api('/auth/change-password', { method: 'POST', body: { old_password: oldPw, new_password: newPw } });
+      closePwModal();
+      state.hasPassword = true;
+      $('btn-passwd').textContent = '修改密码';
+      showToast(data.message || '密码已修改');
+    } catch (e) {
+      setPwMsg(e.message);
+    }
+  });
+}
+
+/* ---------------- 修改密码弹窗 ---------------- */
+
+function setPwMsg(text, info = false) {
+  const el = $('pw-msg');
+  el.textContent = text || '';
+  el.classList.toggle('info', info);
 }
 
 /* ---------------- 暗黑模式 ---------------- */

@@ -243,13 +243,42 @@ authRoutes.post('/reset-password', async (c) => {
   return c.json({ ok: true, token, email: user.email });
 });
 
+// ---- 修改密码（已登录状态；未设置过密码的账号可直接设置）----
+
+authRoutes.post('/change-password', requireAuth, async (c) => {
+  const body = await c.req.json().catch(() => ({}));
+  const pwError = validatePassword(body.new_password);
+  if (pwError) return c.json({ error: pwError }, 400);
+
+  const user = await c.env.DB.prepare('SELECT id, password_hash FROM users WHERE id = ?')
+    .bind(c.get('userId'))
+    .first<{ id: number; password_hash: string | null }>();
+  if (!user) return c.json({ error: '用户不存在' }, 401);
+
+  const storedHash = user.password_hash;
+  const hadPassword = typeof storedHash === 'string' && storedHash.length > 0;
+  if (hadPassword) {
+    const oldPassword = typeof body.old_password === 'string' ? body.old_password : '';
+    if (!oldPassword) return c.json({ error: '请输入当前密码' }, 400);
+    if (!(await verifyPassword(oldPassword, storedHash))) {
+      return c.json({ error: '当前密码不正确' }, 400);
+    }
+  }
+
+  const passwordHash = await hashPassword(body.new_password as string);
+  await c.env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?')
+    .bind(passwordHash, user.id)
+    .run();
+  return c.json({ ok: true, message: hadPassword ? '密码已修改' : '密码已设置' });
+});
+
 // ---- 当前用户 ----
 
 authRoutes.get('/me', requireAuth, async (c) => {
   const userId = c.get('userId');
-  const user = await c.env.DB.prepare('SELECT id, email, created_at FROM users WHERE id = ?')
+  const user = await c.env.DB.prepare('SELECT id, email, created_at, password_hash FROM users WHERE id = ?')
     .bind(userId)
-    .first<{ id: number; email: string; created_at: string }>();
+    .first<{ id: number; email: string; created_at: string; password_hash: string | null }>();
   const counts = await c.env.DB.prepare(
     `SELECT
        (SELECT COUNT(*) FROM links WHERE user_id = ?1 AND type = 'site') AS siteCount,
@@ -262,6 +291,7 @@ authRoutes.get('/me', requireAuth, async (c) => {
     userId,
     email: user?.email ?? c.get('email'),
     registeredAt: user?.created_at ?? null,
+    hasPassword: Boolean(user?.password_hash),
     siteCount: counts?.siteCount ?? 0,
     articleCount: counts?.articleCount ?? 0,
   });
