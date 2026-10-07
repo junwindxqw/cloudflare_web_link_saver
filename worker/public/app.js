@@ -6,6 +6,7 @@ const EXTENSION_ID = 'ojokkllejggilcghafadekmldpgcmphd';
 const TOKEN_KEY = 'ls_token';
 const THEME_KEY = 'ls_theme';
 const SSO_SKIP_KEY = 'ls_sso_skip';
+const LOGGED_OUT_KEY = 'ls_logged_out';
 const PAGE_SIZE = 50;
 
 const state = {
@@ -197,9 +198,12 @@ async function doResetPassword() {
 function logout() {
   state.token = '';
   localStorage.removeItem(TOKEN_KEY);
-  // 当前标签页本轮不再自动登录：否则刷新后扩展 SSO 会立刻重新登录，退出形同虚设。
-  // 新开标签页时自动登录恢复；重新登录成功后标记也会清除。
-  try { sessionStorage.setItem(SSO_SKIP_KEY, '1'); } catch { /* 隐私模式等场景忽略 */ }
+  // 持久退出标记：网页端退出后保持退出状态，扩展 SSO 自动登录停用，
+  // 直到在网页端重新登录。与插件的登录态互不影响。
+  try {
+    sessionStorage.setItem(SSO_SKIP_KEY, '1');
+    localStorage.setItem(LOGGED_OUT_KEY, '1');
+  } catch { /* 隐私模式等场景忽略 */ }
   location.reload();
 }
 
@@ -246,8 +250,11 @@ function enterApp(token, email) {
   state.token = token;
   state.email = email || '';
   if (token) localStorage.setItem(TOKEN_KEY, token);
-  // 重新登录成功后恢复本标签页的自动登录资格
-  try { sessionStorage.removeItem(SSO_SKIP_KEY); } catch { /* 忽略 */ }
+  // 重新登录成功后清除退出标记，自动登录恢复
+  try {
+    sessionStorage.removeItem(SSO_SKIP_KEY);
+    localStorage.removeItem(LOGGED_OUT_KEY);
+  } catch { /* 忽略 */ }
   $('login-view').classList.add('hidden');
   $('app-view').classList.remove('hidden');
   $('user-email').textContent = state.email;
@@ -256,12 +263,19 @@ function enterApp(token, email) {
 }
 
 async function bootstrap() {
+  // 0. 网页端点过退出：保持退出状态，跳过一切自动登录（URL 令牌 / 扩展 SSO），
+  //    直到在网页端重新登录。插件本身的登录态不受影响。
+  let loggedOut = false;
+  try { loggedOut = localStorage.getItem(LOGGED_OUT_KEY) === '1'; } catch { /* 忽略 */ }
+
   // 1. URL 携带一次性令牌（扩展菜单打开 /sso/ott 流程）
-  const params = new URLSearchParams(location.search);
-  const ott = params.get('ott');
-  if (ott) {
-    history.replaceState(null, '', location.pathname);
-    if (await loginWithOtt(ott)) return;
+  if (!loggedOut) {
+    const params = new URLSearchParams(location.search);
+    const ott = params.get('ott');
+    if (ott) {
+      history.replaceState(null, '', location.pathname);
+      if (await loginWithOtt(ott)) return;
+    }
   }
 
   // 2. 本地已有凭证
@@ -278,9 +292,11 @@ async function bootstrap() {
     }
   }
 
-  // 3. 尝试向已登录的扩展要凭证（本标签页退出过后不再自动登录）
-  let ssoSkipped = false;
-  try { ssoSkipped = sessionStorage.getItem(SSO_SKIP_KEY) === '1'; } catch { /* 忽略 */ }
+  // 3. 尝试向已登录的扩展要凭证
+  let ssoSkipped = loggedOut;
+  if (!ssoSkipped) {
+    try { ssoSkipped = sessionStorage.getItem(SSO_SKIP_KEY) === '1'; } catch { /* 忽略 */ }
+  }
   if (!ssoSkipped) {
     const extOtt = await requestOttFromExtension();
     if (extOtt && (await loginWithOtt(extOtt))) return;
