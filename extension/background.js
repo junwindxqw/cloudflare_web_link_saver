@@ -64,13 +64,13 @@ async function postAuthJson(path, payload) {
   }
 }
 
-async function saveUrl(url, title) {
+async function saveUrl(url, title, note = '') {
   if (!url || !/^https?:\/\//i.test(url)) {
     flashBadge('!', '#dc2626');
     notify('仅支持保存 http/https 网址');
     return;
   }
-  const data = await postAuthJson('/api/links', { url, title: title || '' });
+  const data = await postAuthJson('/api/links', { url, title: title || '', note: note || '' });
   if (!data) return;
   flashBadge('✓', '#16a34a');
   notify(data.existed ? `已更新收藏（${data.category}）` : `已保存到「${data.category}」`);
@@ -148,7 +148,7 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
 // 弹窗请求：直接复用保存逻辑与角标反馈
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type === 'SAVE_URL') {
-    saveUrl(msg.url, msg.title).finally(() => sendResponse({ ok: true }));
+    saveUrl(msg.url, msg.title, msg.note || '').finally(() => sendResponse({ ok: true }));
     return true;
   }
   return undefined;

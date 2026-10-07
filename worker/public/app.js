@@ -429,11 +429,12 @@ function itemHtml(it) {
   const domain = it.type === 'article'
     ? `<span class="item-domain" data-domain="${esc(it.domain)}" title="查看该网站分类">${esc(it.domain)}</span>`
     : esc(it.domain);
+  const note = it.note ? `<span class="item-note" title="备注">🏷 ${esc(it.note)}</span>` : '';
   return `<div class="item" data-id="${it.id}">
     ${faviconHtml(it.domain)}
     <div class="item-main">
       <div class="item-title"><a href="${esc(it.url)}" target="_blank" rel="noopener noreferrer">${esc(it.title || it.url)}</a></div>
-      <div class="item-meta">${badge}<span>${domain}</span><span>${fmtDate(it.created_at)}</span></div>
+      <div class="item-meta">${badge}${note}<span>${domain}</span><span>${fmtDate(it.created_at)}</span></div>
     </div>
     <button class="item-del" title="删除" aria-label="删除">✕</button>
   </div>`;

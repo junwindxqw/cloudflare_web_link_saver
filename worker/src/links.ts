@@ -21,12 +21,14 @@ linkRoutes.post('/', async (c) => {
   const userId = c.get('userId');
   const cls = classifyUrl(u);
   const providedTitle = typeof body.title === 'string' ? body.title.replace(/\s+/g, ' ').trim().slice(0, 300) : '';
+  // 备注：用户自行标识（如「待读」「参考」），不传时保留已备注
+  const providedNote = typeof body.note === 'string' ? body.note.replace(/\s+/g, ' ').trim().slice(0, 200) : '';
 
   const existing = await c.env.DB.prepare('SELECT id, title FROM links WHERE user_id = ? AND url = ?')
     .bind(userId, cls.canonical)
     .first<{ id: number; title: string }>();
 
-  // 未提供标题时不降级已存标题；新文章先用兜底标题入库，保存响应后异步抓取 <title> 补全
+  // 未提供标题时不降级已存标题；新文章先用兜底标题入库，保存响应后异步抓取 <title> 回填
   let title = providedTitle;
   let backfill = false;
   if (!title) {
@@ -39,11 +41,12 @@ linkRoutes.post('/', async (c) => {
   }
 
   const upsert = c.env.DB.prepare(
-    `INSERT INTO links (user_id, url, title, domain, type, category) VALUES (?, ?, ?, ?, ?, ?)
+    `INSERT INTO links (user_id, url, title, domain, type, category, note) VALUES (?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(user_id, url) DO UPDATE SET
        title = CASE WHEN excluded.title <> '' THEN excluded.title ELSE title END,
+       note = CASE WHEN excluded.note <> '' THEN excluded.note ELSE note END,
        created_at = datetime('now')`,
-  ).bind(userId, cls.canonical, title, cls.domain, cls.type, cls.category);
+  ).bind(userId, cls.canonical, title, cls.domain, cls.type, cls.category, providedNote);
 
   if (cls.type === 'article') {
     // 文章页同时归档所属站点域名：若该域名尚未保存为网站则自动补一条
@@ -112,10 +115,10 @@ linkRoutes.get('/', async (c) => {
     binds.push(`-${days} days`);
   }
   if (q) {
-    // 转义 LIKE 通配符，让 %/_ 按字面匹配
+    // 转义 LIKE 通配符，让 %/_ 按字面匹配；备注也参与搜索
     const like = `%${q.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
-    where.push(`(title LIKE ? ESCAPE '\\' OR url LIKE ? ESCAPE '\\')`);
-    binds.push(like, like);
+    where.push(`(title LIKE ? ESCAPE '\\' OR url LIKE ? ESCAPE '\\' OR note LIKE ? ESCAPE '\\')`);
+    binds.push(like, like, like);
   }
 
   const whereSql = where.join(' AND ');
@@ -124,7 +127,7 @@ linkRoutes.get('/', async (c) => {
       .bind(...binds)
       .first<{ total: number }>(),
     c.env.DB.prepare(
-      `SELECT id, url, title, domain, type, category, created_at
+      `SELECT id, url, title, domain, type, category, note, created_at
        FROM links WHERE ${whereSql}
        ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
     )
@@ -136,6 +139,7 @@ linkRoutes.get('/', async (c) => {
         domain: string;
         type: 'site' | 'article';
         category: string;
+        note: string;
         created_at: string;
       }>(),
   ]);

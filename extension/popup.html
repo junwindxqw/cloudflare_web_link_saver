@@ -14,6 +14,10 @@
   <!-- 已登录 -->
   <section id="logged-in" class="hidden">
     <p class="status">已登录：<strong id="user-email"></strong></p>
+    <div class="form-row">
+      <label for="note">备注名称（可选，保存时自动带在这条收藏上）</label>
+      <input id="note" type="text" placeholder="如：待读、设计参考" maxlength="100" />
+    </div>
     <button id="btn-save" class="btn-primary">保存当前页面</button>
     <button id="btn-logout" class="btn-ghost">退出登录</button>
   </section>

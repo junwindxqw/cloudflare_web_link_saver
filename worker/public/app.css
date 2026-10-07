@@ -406,6 +406,22 @@ button { font-family: inherit; }
 .badge.site { background: var(--badge-site-bg); color: var(--badge-site-fg); }
 .badge.text { background: var(--badge-text-bg); color: var(--badge-text-fg); }
 .badge.image { background: var(--badge-image-bg); color: var(--badge-image-fg); }
+.item-note {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  border-radius: 4px;
+  padding: 1px 6px;
+  background: #fff7ed;
+  color: #c2410c;
+  flex-shrink: 0;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+[data-theme="dark"] .item-note { background: #3a2a14; color: #fdba74; }
 .item-domain { cursor: pointer; }
 .item-domain:hover { color: var(--primary); }
 .item-del {

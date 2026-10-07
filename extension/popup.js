@@ -129,8 +129,13 @@ async function saveCurrentPage() {
   btn.disabled = true;
   btn.textContent = '保存中…';
   // 保存逻辑与角标反馈在 background.js 中统一处理
-  await chrome.runtime.sendMessage({ type: 'SAVE_URL', url: tab.url, title: tab.title || '' });
-  setTimeout(() => window.close(), 600);
+  await chrome.runtime.sendMessage({ type: 'SAVE_URL', url: tab.url, title: tab.title || '', note: $('note').value.trim() });
+  setTimeout(() => {
+    btn.disabled = false;
+    btn.textContent = '保存当前页面';
+    $('note').value = '';
+    window.close();
+  }, 600);
 }
 
 // 打开 Web 端：插件已登录时先签发一次性令牌带上（网页端立即自动登录），否则普通打开
