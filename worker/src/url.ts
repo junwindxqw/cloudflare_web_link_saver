@@ -112,9 +112,21 @@ export function classifyUrl(input: URL): Classification {
   // 就地归一主机名，调用方随后使用的 u.origin 也与 canonical 保持一致
   const u = input;
   u.hostname = normalizeHost(u.hostname);
-  // 先归一路径再判定类型：pathological 路径（如 //）会塌缩为根，应按网站而非文章处理
+  // pathological 路径（如 //）会塌缩为根，应按网站而非文章处理
   u.pathname = u.pathname.replace(/\/+$/, '') || '/';
   const domain = u.hostname;
+
+  // 统一归一（网站与文章都适用）：剥离锚点与常见追踪参数、参数按名称排序，
+  // 避免同一入口因来源/顺序不同存成多条
+  u.hash = '';
+  const kept: Array<[string, string]> = [];
+  for (const key of new Set([...u.searchParams.keys()])) {
+    if (isTrackingParam(key)) continue;
+    for (const v of u.searchParams.getAll(key)) kept.push([key, v]);
+  }
+  kept.sort((a, b) => (a[0] === b[0] ? (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0) : a[0] < b[0] ? -1 : 1));
+  u.search = '';
+  for (const [k, v] of kept) u.searchParams.append(k, v);
 
   if (u.pathname === '/') {
     return { type: 'site', category: domain, domain, canonical: u.origin + '/' };
@@ -123,19 +135,6 @@ export function classifyUrl(input: URL): Classification {
     // 应用入口页归为网站，但保留自己的完整地址（/chat 不会合并到裸域名条目上）
     return { type: 'site', category: domain, domain, canonical: u.toString() };
   }
-  // 归一化：剥离锚点与常见追踪参数，避免同一文章因入口不同存成多条
-  u.hash = '';
-  const kept: Array<[string, string]> = [];
-  for (const key of new Set([...u.searchParams.keys()])) {
-    if (isTrackingParam(key)) continue;
-    for (const v of u.searchParams.getAll(key)) kept.push([key, v]);
-  }
-  // 参数按名称+值排序：顺序不同视为同一网址
-  kept.sort((a, b) => (a[0] === b[0] ? (a[1] < b[1] ? -1 : a[1] > b[1] ? 1 : 0) : a[0] < b[0] ? -1 : 1));
-  u.search = '';
-  for (const [k, v] of kept) u.searchParams.append(k, v);
-  // 路径尾部斜杠归一：/a/b/ 与 /a/b 视为同一文章
-  u.pathname = u.pathname.replace(/\/+$/, '') || '/';
   return { type: 'article', category: ARTICLE_CATEGORY, domain, canonical: u.toString() };
 }
 
