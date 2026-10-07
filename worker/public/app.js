@@ -24,6 +24,7 @@ const state = {
   snipOffset: 0,
   overview: null,
   loading: false,
+  pendingReset: false,
 };
 
 const DAYS_LABEL = { 1: '近 24 小时', 7: '近 7 天', 30: '近 30 天', 90: '近 90 天' };
@@ -324,7 +325,11 @@ async function refreshOverview() {
 }
 
 async function loadList(reset = false) {
-  if (state.loading) return;
+  // 防竞态：上一个加载未完成时新的加载请求会被丢弃，这里记录并在完成后按最新状态重载
+  if (state.loading) {
+    state.pendingReset = state.pendingReset || reset;
+    return;
+  }
   state.loading = true;
   try {
     if (state.type === 'all') {
@@ -362,6 +367,10 @@ async function loadList(reset = false) {
     showToast(e.message);
   } finally {
     state.loading = false;
+    if (state.pendingReset) {
+      state.pendingReset = false;
+      void loadList(true);
+    }
   }
 }
 
