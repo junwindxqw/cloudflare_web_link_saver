@@ -5,6 +5,7 @@ const EXTENSION_ID = 'ojokkllejggilcghafadekmldpgcmphd';
 
 const TOKEN_KEY = 'ls_token';
 const THEME_KEY = 'ls_theme';
+const SSO_SKIP_KEY = 'ls_sso_skip';
 const PAGE_SIZE = 50;
 
 const state = {
@@ -196,6 +197,9 @@ async function doResetPassword() {
 function logout() {
   state.token = '';
   localStorage.removeItem(TOKEN_KEY);
+  // 当前标签页本轮不再自动登录：否则刷新后扩展 SSO 会立刻重新登录，退出形同虚设。
+  // 新开标签页时自动登录恢复；重新登录成功后标记也会清除。
+  try { sessionStorage.setItem(SSO_SKIP_KEY, '1'); } catch { /* 隐私模式等场景忽略 */ }
   location.reload();
 }
 
@@ -242,6 +246,8 @@ function enterApp(token, email) {
   state.token = token;
   state.email = email || '';
   if (token) localStorage.setItem(TOKEN_KEY, token);
+  // 重新登录成功后恢复本标签页的自动登录资格
+  try { sessionStorage.removeItem(SSO_SKIP_KEY); } catch { /* 忽略 */ }
   $('login-view').classList.add('hidden');
   $('app-view').classList.remove('hidden');
   $('user-email').textContent = state.email;
@@ -272,9 +278,13 @@ async function bootstrap() {
     }
   }
 
-  // 3. 尝试向已登录的扩展要凭证
-  const extOtt = await requestOttFromExtension();
-  if (extOtt && (await loginWithOtt(extOtt))) return;
+  // 3. 尝试向已登录的扩展要凭证（本标签页退出过后不再自动登录）
+  let ssoSkipped = false;
+  try { ssoSkipped = sessionStorage.getItem(SSO_SKIP_KEY) === '1'; } catch { /* 忽略 */ }
+  if (!ssoSkipped) {
+    const extOtt = await requestOttFromExtension();
+    if (extOtt && (await loginWithOtt(extOtt))) return;
+  }
 
   showLogin();
 }
