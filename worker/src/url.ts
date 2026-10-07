@@ -82,16 +82,46 @@ export function normalizeHost(hostname: string): string {
   return h;
 }
 
+// Web 应用/单页入口路径：单段且命中这些词时视为「网站」而非文章
+// （如 doubao.com/chat、xxx.app.workbuddy.host/home 都是应用入口，不是内容页）
+const APP_SHELL_PATHS = new Set([
+  'chat', 'home', 'app', 'new', 'web', 'main', 'index', 'dashboard',
+  'login', 'auth', 'search', 'explore', 'discover', 'feed',
+]);
+
+/**
+ * 判断内容页是否为文章。规则（保守方向拿不准就判文章）：
+ * - 根路径 → 网站（由调用方先行处理）
+ * - 静态文章页后缀（.html/.php 等）→ 文章
+ * - 单段含长数字 ID（/p123456 类）→ 文章
+ * - 多段路径（/t/topic/123、/a/b）→ 文章
+ * - 单段命中 Web 应用入口词（/chat、/home）→ 网站
+ * - 其余单段（/workers 等文档栏目页）→ 文章
+ */
+function looksLikeArticle(pathname: string): boolean {
+  const segs = pathname.split('/').filter(Boolean);
+  if (segs.length === 0) return false;
+  if (/\.(html?|xhtml|shtml|php|aspx?|jsp|cfm)$/i.test(segs[segs.length - 1])) return true;
+  if (segs.length >= 2) return true;
+  if (/\d{5,}/.test(segs[0])) return true;
+  if (APP_SHELL_PATHS.has(segs[0].toLowerCase())) return false;
+  return true;
+}
+
 export function classifyUrl(input: URL): Classification {
   // 就地归一主机名，调用方随后使用的 u.origin 也与 canonical 保持一致
   const u = input;
   u.hostname = normalizeHost(u.hostname);
-  // 先归一路径再判定类型： pathological 路径（如 //）会塌缩为根，应按网站而非文章处理
+  // 先归一路径再判定类型：pathological 路径（如 //）会塌缩为根，应按网站而非文章处理
   u.pathname = u.pathname.replace(/\/+$/, '') || '/';
   const domain = u.hostname;
 
   if (u.pathname === '/') {
     return { type: 'site', category: domain, domain, canonical: u.origin + '/' };
+  }
+  if (!looksLikeArticle(u.pathname)) {
+    // 应用入口页归为网站，但保留自己的完整地址（/chat 不会合并到裸域名条目上）
+    return { type: 'site', category: domain, domain, canonical: u.toString() };
   }
   // 归一化：剥离锚点与常见追踪参数，避免同一文章因入口不同存成多条
   u.hash = '';
