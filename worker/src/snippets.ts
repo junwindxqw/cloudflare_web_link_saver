@@ -55,7 +55,15 @@ snippetRoutes.post('/', async (c) => {
   if (isDataUrl) {
     const parsed = parseDataUrlImage(content);
     if (typeof parsed === 'string') saveError = parsed;
-    else stored = await saveMedia(c.env, parsed.buf, parsed.mime);
+    else {
+      // data: URL 无法回退外链，存储失败只能报错让用户重试
+      try {
+        stored = await saveMedia(c.env, parsed.buf, parsed.mime);
+      } catch (e) {
+        console.error('snippet media storage failed', e);
+        saveError = '存储服务暂时不可用，请稍后重试';
+      }
+    }
   } else if (/^https?:\/\//i.test(content)) {
     stored = await storeRemoteImage(c.env, content, sourceUrl);
   } else {
@@ -191,6 +199,7 @@ function parseDataUrlImage(raw: string): { buf: ArrayBuffer; mime: string } | st
   const m = raw.match(/^data:(image\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=\s]+)$/);
   if (!m) return '仅支持 base64 编码的 data:image/* 地址';
   const mime = m[1].toLowerCase();
+  if (mime === 'image/svg+xml') return '不支持保存 SVG 图片';
   const b64 = m[2].replace(/\s+/g, '');
   let bin: string;
   try {
@@ -242,10 +251,17 @@ async function storeRemoteImage(env: Env, rawUrl: string, referer: string): Prom
     }
     if (!res.ok) return null;
     const mime = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
-    if (!mime.startsWith('image/')) return null;
+    // image/* 才转存；SVG 可内嵌脚本，防御性拒绝，回退保存外链
+    if (!mime.startsWith('image/') || mime === 'image/svg+xml') return null;
     const buf = await readCapped(res, MAX_IMAGE_BYTES);
     if (!buf) return null;
-    return saveMedia(env, buf, mime);
+    try {
+      return await saveMedia(env, buf, mime);
+    } catch (e) {
+      // 存储写入失败不应让整个保存请求失败：回退为保存外链
+      console.error('snippet media storage failed', e);
+      return null;
+    }
   }
   return null;
 }

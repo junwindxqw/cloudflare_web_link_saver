@@ -86,9 +86,11 @@ export function classifyUrl(input: URL): Classification {
   // 就地归一主机名，调用方随后使用的 u.origin 也与 canonical 保持一致
   const u = input;
   u.hostname = normalizeHost(u.hostname);
+  // 先归一路径再判定类型： pathological 路径（如 //）会塌缩为根，应按网站而非文章处理
+  u.pathname = u.pathname.replace(/\/+$/, '') || '/';
   const domain = u.hostname;
 
-  if (u.pathname === '' || u.pathname === '/') {
+  if (u.pathname === '/') {
     return { type: 'site', category: domain, domain, canonical: u.origin + '/' };
   }
   // 归一化：剥离锚点与常见追踪参数，避免同一文章因入口不同存成多条
