@@ -133,6 +133,29 @@ async function saveCurrentPage() {
   setTimeout(() => window.close(), 600);
 }
 
+// 打开 Web 端：插件已登录时先签发一次性令牌带上（网页端立即自动登录），否则普通打开
+async function openWeb() {
+  const { token } = await chrome.storage.local.get('token');
+  if (token) {
+    try {
+      const res = await fetch(`${API_BASE}/api/sso/ott`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok && data.ott) {
+        chrome.tabs.create({ url: `${WEB_ORIGIN}/?ott=${data.ott}` });
+        window.close();
+        return;
+      }
+    } catch {
+      /* 签发失败时回退为普通打开 */
+    }
+  }
+  chrome.tabs.create({ url: WEB_ORIGIN });
+  window.close();
+}
+
 async function main() {
   const { token, email } = await chrome.storage.local.get(['token', 'email']);
   state.token = token || null;
@@ -166,14 +189,12 @@ async function main() {
   webLink.href = WEB_ORIGIN;
   webLink.addEventListener('click', (e) => {
     e.preventDefault();
-    chrome.tabs.create({ url: WEB_ORIGIN });
-    window.close();
+    openWeb();
   });
 
   $('open-web').addEventListener('click', (e) => {
     e.preventDefault();
-    chrome.tabs.create({ url: WEB_ORIGIN });
-    window.close();
+    openWeb();
   });
 }
 

@@ -275,22 +275,21 @@ function applyAccountInfo(me) {
 }
 
 async function bootstrap() {
-  // 0. 网页端点过退出：保持退出状态，跳过一切自动登录（URL 令牌 / 扩展 SSO），
+  // 1. URL 携带一次性令牌：只有插件「打开 Web 端」能签发（插件已登录），属于显式登录凭据，
+  //    优先级高于网页端的退出状态——从插件打开即视为要登录，成功后会清除退出标记。
+  const urlOtt = new URLSearchParams(location.search).get('ott');
+  if (urlOtt) {
+    history.replaceState(null, '', location.pathname);
+    if (await loginWithOtt(urlOtt)) return;
+  }
+
+  // 2. 网页端点过退出：保持退出状态，跳过其余自动登录（含扩展 SSO 消息桥），
   //    直到在网页端重新登录。插件本身的登录态不受影响。
   let loggedOut = false;
   try { loggedOut = localStorage.getItem(LOGGED_OUT_KEY) === '1'; } catch { /* 忽略 */ }
+  if (loggedOut) return showLogin();
 
-  // 1. URL 携带一次性令牌（扩展菜单打开 /sso/ott 流程）
-  if (!loggedOut) {
-    const params = new URLSearchParams(location.search);
-    const ott = params.get('ott');
-    if (ott) {
-      history.replaceState(null, '', location.pathname);
-      if (await loginWithOtt(ott)) return;
-    }
-  }
-
-  // 2. 本地已有凭证
+  // 3. 本地已有凭证
   if (state.token) {
     try {
       const me = await api('/auth/me');
@@ -305,11 +304,9 @@ async function bootstrap() {
     }
   }
 
-  // 3. 尝试向已登录的扩展要凭证
-  let ssoSkipped = loggedOut;
-  if (!ssoSkipped) {
-    try { ssoSkipped = sessionStorage.getItem(SSO_SKIP_KEY) === '1'; } catch { /* 忽略 */ }
-  }
+  // 4. 尝试向已登录的扩展要凭证（消息桥；退出后的标签页不自动登录）
+  let ssoSkipped = false;
+  try { ssoSkipped = sessionStorage.getItem(SSO_SKIP_KEY) === '1'; } catch { /* 忽略 */ }
   if (!ssoSkipped) {
     const extOtt = await requestOttFromExtension();
     if (extOtt && (await loginWithOtt(extOtt))) return;
