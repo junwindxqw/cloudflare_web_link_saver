@@ -105,6 +105,7 @@
         <div class="logo"><img class="logo-icon" src="/logo.png" width="22" height="22" alt="" /><span class="logo-text">Link Saver</span></div>
         <div class="topbar-right">
           <span id="user-email" class="user-email"></span>
+          <button id="btn-add" class="btn-ghost btn-add" type="button">＋ 添加</button>
           <button id="btn-passwd" class="btn-ghost" type="button">修改密码</button>
           <button id="btn-theme" class="btn-ghost btn-theme" type="button" title="切换深色 / 浅色模式" aria-label="切换深色 / 浅色模式">🌙</button>
           <button id="btn-logout" class="btn-ghost">退出</button>
@@ -189,6 +190,66 @@
       <div class="modal-actions">
         <button id="btn-pw-cancel" class="btn-ghost" type="button">取消</button>
         <button id="btn-pw-save" class="btn-primary btn-pw-save" type="button">保存</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 手动添加弹窗：网址 / 纯文本 / 图片 -->
+  <div id="add-modal" class="modal-backdrop hidden">
+    <div class="modal-card modal-card-add">
+      <h3 class="modal-title">添加收藏</h3>
+      <div class="mode-tabs add-tabs" id="add-tabs">
+        <button type="button" class="active" data-add="link">网址</button>
+        <button type="button" data-add="text">纯文本</button>
+        <button type="button" data-add="image">图片</button>
+      </div>
+
+      <div class="add-pane" id="add-pane-link">
+        <div class="form-row">
+          <label for="add-url">网址</label>
+          <input id="add-url" type="text" placeholder="https://example.com/..." />
+        </div>
+        <div class="form-row">
+          <label for="add-link-title">标题（可选，留空自动获取）</label>
+          <input id="add-link-title" type="text" placeholder="不填则自动抓取页面标题" />
+        </div>
+        <div class="form-row">
+          <label for="add-link-note">备注（可选）</label>
+          <input id="add-link-note" type="text" placeholder="如：待读、设计参考" maxlength="100" />
+        </div>
+      </div>
+
+      <div class="add-pane hidden" id="add-pane-text">
+        <div class="form-row">
+          <label for="add-text">内容（上限 1 万字）</label>
+          <textarea id="add-text" rows="6" placeholder="输入或粘贴要保存的文本…"></textarea>
+        </div>
+        <div class="form-row">
+          <label for="add-text-src">来源（可选）</label>
+          <input id="add-text-src" type="text" placeholder="https://…（留空则不记录）" />
+        </div>
+      </div>
+
+      <div class="add-pane hidden" id="add-pane-image">
+        <div id="add-img-drop" class="img-drop" tabindex="0" role="button" aria-label="粘贴或选择图片">
+          <p class="img-drop-hint">粘贴（Ctrl+V）、拖拽或</p>
+          <p><button id="btn-img-pick" type="button" class="btn-link">选择图片</button></p>
+          <input id="add-img-file" type="file" accept="image/*" class="hidden" />
+          <p class="img-drop-note">≤5MB，保存后自动转存到服务端</p>
+        </div>
+        <div id="add-img-preview" class="img-preview hidden">
+          <img id="add-img-thumb" alt="待保存的图片预览" />
+          <div class="img-preview-meta">
+            <span id="add-img-name" class="img-name"></span>
+            <button id="btn-img-clear" type="button" class="btn-link">重新选择</button>
+          </div>
+        </div>
+      </div>
+
+      <div id="add-msg" class="login-status" role="alert"></div>
+      <div class="modal-actions">
+        <button id="btn-add-cancel" class="btn-ghost" type="button">取消</button>
+        <button id="btn-add-save" class="btn-primary btn-pw-save" type="button">保存</button>
       </div>
     </div>
   </div>

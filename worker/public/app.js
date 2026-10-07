@@ -761,6 +761,7 @@ function bindEvents() {
       setPwMsg(e.message);
     }
   });
+  bindAddEvents();
 }
 
 /* ---------------- 修改密码弹窗 ---------------- */
@@ -769,6 +770,150 @@ function setPwMsg(text, info = false) {
   const el = $('pw-msg');
   el.textContent = text || '';
   el.classList.toggle('info', info);
+}
+
+/* ---------------- 手动添加（网址 / 纯文本 / 图片） ---------------- */
+
+const addState = { tab: 'link', image: null };
+
+function setAddMsg(text, info = false) {
+  const el = $('add-msg');
+  el.textContent = text || '';
+  el.classList.toggle('info', info);
+}
+
+function openAddModal() {
+  addState.tab = 'link';
+  addState.image = null;
+  $('add-url').value = '';
+  $('add-link-title').value = '';
+  $('add-link-note').value = '';
+  $('add-text').value = '';
+  $('add-text-src').value = '';
+  $('add-img-file').value = '';
+  $('add-img-preview').classList.add('hidden');
+  $('add-img-drop').classList.remove('hidden');
+  setAddMsg('');
+  renderAddTabs();
+  $('add-modal').classList.remove('hidden');
+  $('add-url').focus();
+}
+
+function renderAddTabs() {
+  document.querySelectorAll('#add-tabs button').forEach((b) => {
+    b.classList.toggle('active', b.dataset.add === addState.tab);
+  });
+  $('add-pane-link').classList.toggle('hidden', addState.tab !== 'link');
+  $('add-pane-text').classList.toggle('hidden', addState.tab !== 'text');
+  $('add-pane-image').classList.toggle('hidden', addState.tab !== 'image');
+}
+
+function closeAddModal() {
+  $('add-modal').classList.add('hidden');
+}
+
+// 读取图片文件为 data URL（≤5MB），进入预览态
+function readImageFile(file) {
+  if (!file) return;
+  if (!file.type.startsWith('image/')) return setAddMsg('请选择图片文件');
+  if (file.type === 'image/svg+xml') return setAddMsg('不支持 SVG 图片（可含脚本）');
+  if (file.size > 5 * 1024 * 1024) return setAddMsg('图片过大（上限 5MB）');
+  const reader = new FileReader();
+  reader.onload = () => {
+    addState.image = { dataUrl: String(reader.result), name: file.name || '剪贴板图片' };
+    $('add-img-thumb').src = addState.image.dataUrl;
+    $('add-img-name').textContent = `${addState.image.name}（${(file.size / 1024).toFixed(0)} KB）`;
+    $('add-img-drop').classList.add('hidden');
+    $('add-img-preview').classList.remove('hidden');
+    setAddMsg('');
+  };
+  reader.onerror = () => setAddMsg('图片读取失败，请重试');
+  reader.readAsDataURL(file);
+}
+
+function bindAddEvents() {
+  $('btn-add').addEventListener('click', openAddModal);
+  $('btn-add-cancel').addEventListener('click', closeAddModal);
+  $('add-modal').addEventListener('click', (e) => { if (e.target === $('add-modal')) closeAddModal(); });
+
+  $('add-tabs').addEventListener('click', (e) => {
+    const btn = e.target.closest('button');
+    if (!btn) return;
+    addState.tab = btn.dataset.add;
+    setAddMsg('');
+    renderAddTabs();
+  });
+
+  // 图片：选择 / 粘贴 / 拖拽
+  $('btn-img-pick').addEventListener('click', (e) => { e.stopPropagation(); $('add-img-file').click(); });
+  $('add-img-drop').addEventListener('click', (e) => { if (e.target.id !== 'btn-img-pick') $('add-img-file').click(); });
+  $('add-img-file').addEventListener('change', (e) => readImageFile(e.target.files?.[0]));
+  $('btn-img-clear').addEventListener('click', () => {
+    addState.image = null;
+    $('add-img-file').value = '';
+    $('add-img-preview').classList.add('hidden');
+    $('add-img-drop').classList.remove('hidden');
+  });
+  const drop = $('add-img-drop');
+  drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('dragover'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('dragover'));
+  drop.addEventListener('drop', (e) => {
+    e.preventDefault();
+    drop.classList.remove('dragover');
+    readImageFile(e.dataTransfer?.files?.[0]);
+  });
+  drop.addEventListener('paste', (e) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (const it of items) {
+      if (it.kind === 'file' && it.type.startsWith('image/')) {
+        readImageFile(it.getAsFile());
+        e.preventDefault();
+        return;
+      }
+    }
+  });
+
+  $('btn-add-save').addEventListener('click', saveFromAddModal);
+}
+
+async function saveFromAddModal() {
+  const btn = $('btn-add-save');
+  btn.disabled = true;
+  setAddMsg('正在保存…', true);
+  try {
+    if (addState.tab === 'link') {
+      const url = $('add-url').value.trim();
+      const title = $('add-link-title').value.trim();
+      const note = $('add-link-note').value.trim();
+      if (!url) return setAddMsg('请输入网址');
+      const data = await api('/links', { method: 'POST', body: { url, title, note } });
+      await afterManualSave(`已保存到「${data.category}」`);
+    } else if (addState.tab === 'text') {
+      const content = $('add-text').value.trim();
+      const sourceUrl = $('add-text-src').value.trim();
+      if (!content) return setAddMsg('请输入内容');
+      const data = await api('/snippets', { method: 'POST', body: { type: 'text', content: content.slice(0, 10000), source_url: sourceUrl } });
+      await afterManualSave(`已保存纯文本（${Math.min(content.length, 10000)} 字）`, 'text');
+    } else {
+      if (!addState.image) return setAddMsg('请先粘贴或选择图片');
+      const data = await api('/snippets', { method: 'POST', body: { type: 'image', content: addState.image.dataUrl } });
+      await afterManualSave(data.stored ? '图片已转存到服务端' : '图片已保存', 'image');
+    }
+  } catch (e) {
+    if (e.status === 401) return logout();
+    setAddMsg(e.message);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function afterManualSave(message, switchType) {
+  showToast(message);
+  closeAddModal();
+  if (switchType && state.type !== switchType) applyFilter({ type: switchType, category: '', month: '', snipMonth: '' });
+  else await loadList(true);
+  refreshOverview();
 }
 
 /* ---------------- 备注编辑 ---------------- */

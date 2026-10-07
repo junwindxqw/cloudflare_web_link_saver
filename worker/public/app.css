@@ -565,6 +565,57 @@ button { font-family: inherit; }
 .modal-actions .btn-ghost { flex: 1; margin: 0; padding: 9px; }
 .btn-pw-save { flex: 2; margin: 0; }
 
+/* ---------- 手动添加弹窗 ---------- */
+.btn-add {
+  border-color: var(--primary);
+  color: var(--primary);
+  font-weight: 600;
+}
+.btn-add:hover { background: var(--primary-weak); color: var(--primary); }
+.modal-card-add { max-width: 420px; }
+.add-tabs { margin-bottom: 14px; }
+.form-row textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  font-size: 14px;
+  font-family: inherit;
+  outline: none;
+  background: var(--input-bg);
+  color: var(--text);
+  resize: vertical;
+}
+.form-row textarea:focus { border-color: var(--primary); background: var(--card); }
+
+.img-drop {
+  border: 1.5px dashed var(--line);
+  border-radius: 12px;
+  padding: 26px 16px;
+  text-align: center;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+  outline: none;
+}
+.img-drop:hover, .img-drop:focus-visible { border-color: var(--primary); }
+.img-drop.dragover { border-color: var(--primary); background: var(--primary-weak); }
+.img-drop p { margin: 4px 0; }
+.img-drop-note { font-size: 12px; color: var(--faint); }
+
+.img-preview { display: flex; gap: 12px; align-items: flex-start; }
+.img-preview img {
+  max-width: 180px;
+  max-height: 140px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  object-fit: contain;
+  background: var(--input-bg);
+}
+.img-preview-meta { display: flex; flex-direction: column; gap: 8px; }
+.img-name { font-size: 12.5px; color: var(--muted); word-break: break-all; }
+
 /* ---------- Toast ---------- */
 .toast {
   position: fixed;
