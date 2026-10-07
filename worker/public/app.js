@@ -862,17 +862,25 @@ function bindAddEvents() {
     drop.classList.remove('dragover');
     readImageFile(e.dataTransfer?.files?.[0]);
   });
-  drop.addEventListener('paste', (e) => {
+  // 弹窗打开且处于图片页签时，Ctrl+V 在任意位置粘贴图片都生效
+  document.addEventListener('paste', (e) => {
+    if ($('add-modal').classList.contains('hidden') || addState.tab !== 'image') return;
     const items = e.clipboardData?.items;
     if (!items) return;
     for (const it of items) {
       if (it.kind === 'file' && it.type.startsWith('image/')) {
-        readImageFile(it.getAsFile());
         e.preventDefault();
+        readImageFile(it.getAsFile());
         return;
       }
     }
   });
+
+  // 键盘提交：网址页签 Enter、纯文本 Ctrl+Enter
+  for (const id of ['add-url', 'add-link-title', 'add-link-note', 'add-text-src']) {
+    $(id).addEventListener('keydown', (e) => { if (e.key === 'Enter') saveFromAddModal(); });
+  }
+  $('add-text').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) saveFromAddModal(); });
 
   $('btn-add-save').addEventListener('click', saveFromAddModal);
 }
@@ -883,7 +891,9 @@ async function saveFromAddModal() {
   setAddMsg('正在保存…', true);
   try {
     if (addState.tab === 'link') {
-      const url = $('add-url').value.trim();
+      // 缺省协议时自动补 https://，减少「仅支持 http/https」的困惑
+      let url = $('add-url').value.trim();
+      if (url && !/^https?:\/\//i.test(url)) url = `https://${url}`;
       const title = $('add-link-title').value.trim();
       const note = $('add-link-note').value.trim();
       if (!url) return setAddMsg('请输入网址');
