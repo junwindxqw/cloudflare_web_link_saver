@@ -1,5 +1,6 @@
 import { Hono } from 'hono';
 import type { Env } from './types';
+import { ARTICLE_CATEGORY } from './types';
 import { requireAuth } from './middleware';
 import { assertPublicHttpUrl, classifyUrl, fallbackTitle, fetchPageTitle } from './url';
 
@@ -20,6 +21,10 @@ linkRoutes.post('/', async (c) => {
 
   const userId = c.get('userId');
   const cls = classifyUrl(u);
+  // 网页端「网站 / 文章」页签可显式指定类型，覆盖自动归类；扩展保存不传，仍走自动归类
+  const forcedType = body.type === 'site' || body.type === 'article' ? body.type : '';
+  const type = forcedType || cls.type;
+  const category = type === 'article' ? ARTICLE_CATEGORY : cls.domain;
   const providedTitle = typeof body.title === 'string' ? body.title.replace(/\s+/g, ' ').trim().slice(0, 300) : '';
   // 备注：用户自行标识（如「待读」「参考」），不传时保留已备注
   const providedNote = typeof body.note === 'string' ? body.note.replace(/\s+/g, ' ').trim().slice(0, 200) : '';
@@ -34,10 +39,10 @@ linkRoutes.post('/', async (c) => {
   if (!title) {
     title = existing
       ? existing.title || fallbackTitle(u)
-      : cls.type === 'site'
+      : type === 'site'
         ? cls.domain
         : fallbackTitle(u);
-    backfill = cls.type === 'article';
+    backfill = type === 'article';
   }
 
   const upsert = c.env.DB.prepare(
@@ -45,10 +50,12 @@ linkRoutes.post('/', async (c) => {
      ON CONFLICT(user_id, url) DO UPDATE SET
        title = CASE WHEN excluded.title <> '' THEN excluded.title ELSE title END,
        note = CASE WHEN excluded.note <> '' THEN excluded.note ELSE note END,
+       type = excluded.type,
+       category = excluded.category,
        created_at = datetime('now')`,
-  ).bind(userId, cls.canonical, title, cls.domain, cls.type, cls.category, providedNote);
+  ).bind(userId, cls.canonical, title, cls.domain, type, category, providedNote);
 
-  if (cls.type === 'article') {
+  if (type === 'article') {
     // 文章页同时归档所属站点域名：若该域名尚未保存为网站则自动补一条
     const siteUpsert = c.env.DB.prepare(
       `INSERT OR IGNORE INTO links (user_id, url, title, domain, type, category) VALUES (?, ?, ?, ?, 'site', ?)`,
@@ -78,8 +85,8 @@ linkRoutes.post('/', async (c) => {
 
   return c.json({
     ok: true,
-    type: cls.type,
-    category: cls.category,
+    type,
+    category,
     domain: cls.domain,
     title: title || existing?.title || '',
     existed: Boolean(existing),

@@ -102,7 +102,7 @@
   <div id="app-view" class="app-view hidden">
     <header class="topbar">
       <div class="topbar-inner">
-        <div class="logo"><img class="logo-icon" src="/logo.png" width="22" height="22" alt="" /><span class="logo-text">Link Saver</span></div>
+        <div class="logo" id="logo-home" role="button" tabindex="0" title="重置筛选，回到网站列表"><img class="logo-icon" src="/logo.png" width="22" height="22" alt="" /><span class="logo-text">Link Saver</span></div>
         <div class="topbar-right">
           <span id="user-email" class="user-email"></span>
           <button id="btn-add" class="btn-ghost btn-add" type="button">＋ 添加</button>
@@ -136,8 +136,7 @@
       <main class="content">
         <div class="toolbar">
           <div class="chips" id="type-chips">
-            <button class="chip active" data-type="all">全部</button>
-            <button class="chip" data-type="site">网站</button>
+            <button class="chip active" data-type="site">网站</button>
             <button class="chip" data-type="article">文章</button>
             <button class="chip" data-type="text">纯文本</button>
             <button class="chip" data-type="image">图片</button>
@@ -198,25 +197,42 @@
   <div id="add-modal" class="modal-backdrop hidden">
     <div class="modal-card modal-card-add">
       <h3 class="modal-title">添加收藏</h3>
-      <div class="mode-tabs add-tabs" id="add-tabs">
-        <button type="button" class="active" data-add="link">网址</button>
-        <button type="button" data-add="text">纯文本</button>
-        <button type="button" data-add="image">图片</button>
+      <div class="add-tabs" id="add-tabs" role="tablist">
+        <button type="button" class="active" data-add="link" role="tab">🌐 网站</button>
+        <button type="button" data-add="article" role="tab">📄 文章</button>
+        <button type="button" data-add="text" role="tab">📝 纯文本</button>
+        <button type="button" data-add="image" role="tab">🖼 图片</button>
       </div>
 
       <div class="add-pane" id="add-pane-link">
         <div class="form-row">
-          <label for="add-url">网址</label>
-          <input id="add-url" type="text" placeholder="https://example.com/..." />
+          <label for="add-link-url">网址</label>
+          <input id="add-link-url" type="text" placeholder="https://example.com/..." />
         </div>
         <div class="form-row">
           <label for="add-link-title">标题（可选，留空自动获取）</label>
-          <input id="add-link-title" type="text" placeholder="不填则自动抓取页面标题" />
+          <input id="add-link-title" type="text" placeholder="不填则用域名作为标题" />
         </div>
         <div class="form-row">
           <label for="add-link-note">备注（可选）</label>
           <input id="add-link-note" type="text" placeholder="如：待读、设计参考" maxlength="100" />
         </div>
+      </div>
+
+      <div class="add-pane hidden" id="add-pane-article">
+        <div class="form-row">
+          <label for="add-art-url">网址</label>
+          <input id="add-art-url" type="text" placeholder="https://example.com/post/..." />
+        </div>
+        <div class="form-row">
+          <label for="add-art-title">标题（可选，留空自动获取）</label>
+          <input id="add-art-title" type="text" placeholder="不填则自动抓取文章标题" />
+        </div>
+        <div class="form-row">
+          <label for="add-art-note">备注（可选）</label>
+          <input id="add-art-note" type="text" placeholder="如：待读、设计参考" maxlength="100" />
+        </div>
+        <p class="add-pane-hint">按「文章」归类，不按域名自动判定；保存时自动补一条所属网站的记录。</p>
       </div>
 
       <div class="add-pane hidden" id="add-pane-text">

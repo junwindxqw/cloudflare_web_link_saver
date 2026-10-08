@@ -12,7 +12,7 @@ const PAGE_SIZE = 50;
 const state = {
   token: localStorage.getItem(TOKEN_KEY) || '',
   email: '',
-  type: 'all', // all | site | article（链接） | text | image（选中内容）
+  type: 'site', // site | article（链接） | text | image（选中内容）
   category: '',
   month: '',
   snipMonth: '', // 纯文本 / 图片视图的月份归档筛选
@@ -20,8 +20,6 @@ const state = {
   q: '',
   offset: 0,
   total: 0,
-  linkOffset: 0,  // 「全部」视图下两个数据源各自的分页游标
-  snipOffset: 0,
   overview: null,
   loading: false,
   pendingReset: false,
@@ -341,36 +339,13 @@ async function loadList(reset = false) {
   }
   state.loading = true;
   try {
-    if (state.type === 'all') {
-      // 全部 = 链接 + 选中内容两个数据源并行分页，按时间归并
-      const lOffset = reset ? 0 : state.linkOffset;
-      const sOffset = reset ? 0 : state.snipOffset;
-      const [lData, sData] = await Promise.all([
-        api(`/links?${listQs({ type: 'all', limit: PAGE_SIZE, offset: lOffset })}`),
-        api(`/snippets?${listQs({ limit: PAGE_SIZE, offset: sOffset })}`),
-      ]);
-      state.linkTotal = lData.total;
-      state.snipTotal = sData.total;
-      state.linkOffset = lOffset + lData.items.length;
-      state.snipOffset = sOffset + sData.items.length;
-      state.total = lData.total + sData.total;
-      state.offset = state.linkOffset + state.snipOffset;
-      const merged = [...lData.items, ...sData.items].sort((a, b) =>
-        (b.created_at || '').localeCompare(a.created_at || '') || (b.id - a.id));
-      renderList(merged, reset);
-    } else if (isSnippetType(state.type)) {
-      const offset = reset ? 0 : state.offset;
-      const data = await api(`/snippets?${listQs({ type: state.type, limit: PAGE_SIZE, offset })}`);
-      state.total = data.total;
-      state.offset = offset + data.items.length;
-      renderList(data.items, reset);
-    } else {
-      const offset = reset ? 0 : state.offset;
-      const data = await api(`/links?${listQs({ type: state.type, limit: PAGE_SIZE, offset })}`);
-      state.total = data.total;
-      state.offset = offset + data.items.length;
-      renderList(data.items, reset);
-    }
+    const offset = reset ? 0 : state.offset;
+    const data = isSnippetType(state.type)
+      ? await api(`/snippets?${listQs({ type: state.type, limit: PAGE_SIZE, offset })}`)
+      : await api(`/links?${listQs({ type: state.type, limit: PAGE_SIZE, offset })}`);
+    state.total = data.total;
+    state.offset = offset + data.items.length;
+    renderList(data.items, reset);
   } catch (e) {
     if (e.status === 401) return logout();
     showToast(e.message);
@@ -562,14 +537,22 @@ function renderList(items, reset) {
 
   const empty = $('list-empty');
   if (listEl.children.length === 0) {
-    const filtered = state.category || state.month || state.snipMonth || state.q || state.days || state.type !== 'all';
-    empty.textContent = isSnippetType(state.type)
-      ? (state.type === 'text'
-        ? '还没有保存的纯文本，去网页里选中文字，右键「保存选中文本到 Link Saver」'
-        : '还没有保存的图片，去网页里右键图片，选择「保存图片到 Link Saver」')
-      : filtered
-        ? '没有符合条件的收藏'
-        : '还没有收藏，去网页里右键「Send to Link Saver」吧';
+    // 「全部」视图已移除：没有任何数据时给新手引导，有数据但被筛空时提示换条件
+    const tc = state.overview?.typeCounts;
+    const sc = state.overview?.snippetCounts;
+    const hasAny = ((tc?.site ?? 0) + (tc?.article ?? 0) + (sc?.text ?? 0) + (sc?.image ?? 0)) > 0;
+    const filtered = !!(state.category || state.month || state.snipMonth || state.q || state.days);
+    if (!hasAny) {
+      empty.textContent = '还没有收藏：安装扩展后右键「Send to Link Saver」，或点右上角「＋ 添加」手动保存';
+    } else if (filtered) {
+      empty.textContent = '没有符合条件的收藏';
+    } else if (isSnippetType(state.type)) {
+      empty.textContent = state.type === 'text'
+        ? '还没有保存的纯文本，在网页里选中文字后右键「Send to Link Saver」'
+        : '还没有保存的图片，在网页里右键图片「Send to Link Saver」';
+    } else {
+      empty.textContent = state.type === 'article' ? '还没有文章' : '还没有网站';
+    }
     empty.classList.remove('hidden');
   } else {
     empty.classList.add('hidden');
@@ -670,13 +653,12 @@ function renderTypeChips() {
   const tc = state.overview?.typeCounts ?? { site: 0, article: 0 };
   const sc = state.overview?.snippetCounts ?? { text: 0, image: 0 };
   const counts = {
-    all: tc.site + tc.article + sc.text + sc.image,
     site: tc.site,
     article: tc.article,
     text: sc.text,
     image: sc.image,
   };
-  const labels = { all: '全部', site: '网站', article: '文章', text: '纯文本', image: '图片' };
+  const labels = { site: '网站', article: '文章', text: '纯文本', image: '图片' };
   document.querySelectorAll('#type-chips .chip').forEach((chip) => {
     const t = chip.dataset.type;
     const n = counts[t] ?? 0;
@@ -737,6 +719,20 @@ function bindEvents() {
   $('reset-email').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('reset-code').focus(); });
 
   $('btn-logout').addEventListener('click', logout);
+
+  // 点 logo = 回到默认视图：清空全部筛选并刷新列表
+  const resetToHome = () => {
+    $('search-input').value = '';
+    $('date-select').value = '0';
+    window.scrollTo({ top: 0 });
+    applyFilter({ type: 'site', category: '', month: '', snipMonth: '', days: 0, q: '' });
+    showToast('已重置为网站列表');
+  };
+  const logo = $('logo-home');
+  logo.addEventListener('click', resetToHome);
+  logo.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); resetToHome(); }
+  });
 
   $('type-chips').addEventListener('click', (e) => {
     const chip = e.target.closest('.chip');
@@ -895,9 +891,9 @@ function setAddMsg(text, info = false) {
 function openAddModal() {
   addState.tab = 'link';
   addState.image = null;
-  $('add-url').value = '';
-  $('add-link-title').value = '';
-  $('add-link-note').value = '';
+  for (const id of ['add-link-url', 'add-link-title', 'add-link-note', 'add-art-url', 'add-art-title', 'add-art-note']) {
+    $(id).value = '';
+  }
   $('add-text').value = '';
   $('add-text-src').value = '';
   $('add-img-file').value = '';
@@ -906,16 +902,16 @@ function openAddModal() {
   setAddMsg('');
   renderAddTabs();
   $('add-modal').classList.remove('hidden');
-  $('add-url').focus();
+  $('add-link-url').focus();
 }
 
 function renderAddTabs() {
   document.querySelectorAll('#add-tabs button').forEach((b) => {
     b.classList.toggle('active', b.dataset.add === addState.tab);
   });
-  $('add-pane-link').classList.toggle('hidden', addState.tab !== 'link');
-  $('add-pane-text').classList.toggle('hidden', addState.tab !== 'text');
-  $('add-pane-image').classList.toggle('hidden', addState.tab !== 'image');
+  document.querySelectorAll('.add-pane').forEach((pane) => {
+    pane.classList.toggle('hidden', pane.id !== `add-pane-${addState.tab}`);
+  });
 }
 
 function closeAddModal() {
@@ -986,8 +982,8 @@ function bindAddEvents() {
     }
   });
 
-  // 键盘提交：网址页签 Enter、纯文本 Ctrl+Enter
-  for (const id of ['add-url', 'add-link-title', 'add-link-note', 'add-text-src']) {
+  // 键盘提交：网址 / 文章页签 Enter、纯文本 Ctrl+Enter
+  for (const id of ['add-link-url', 'add-link-title', 'add-link-note', 'add-art-url', 'add-art-title', 'add-art-note', 'add-text-src']) {
     $(id).addEventListener('keydown', (e) => { if (e.key === 'Enter') saveFromAddModal(); });
   }
   $('add-text').addEventListener('keydown', (e) => { if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) saveFromAddModal(); });
@@ -1000,15 +996,17 @@ async function saveFromAddModal() {
   btn.disabled = true;
   setAddMsg('正在保存…', true);
   try {
-    if (addState.tab === 'link') {
-      // 缺省协议时自动补 https://，减少「仅支持 http/https」的困惑
-      let url = $('add-url').value.trim();
+    if (addState.tab === 'link' || addState.tab === 'article') {
+      // 网站 / 文章两个页签共用网址表单，显式指定保存类型（缺省协议自动补 https://）
+      const type = addState.tab === 'article' ? 'article' : 'site';
+      const p = type === 'article' ? 'art' : 'link';
+      let url = $(`add-${p}-url`).value.trim();
       if (url && !/^https?:\/\//i.test(url)) url = `https://${url}`;
-      const title = $('add-link-title').value.trim();
-      const note = $('add-link-note').value.trim();
+      const title = $(`add-${p}-title`).value.trim();
+      const note = $(`add-${p}-note`).value.trim();
       if (!url) return setAddMsg('请输入网址');
-      const data = await api('/links', { method: 'POST', body: { url, title, note } });
-      await afterManualSave(`已保存到「${data.category}」`);
+      await api('/links', { method: 'POST', body: { url, title, note, type } });
+      await afterManualSave(type === 'article' ? '已保存为文章' : '已保存为网站', type);
     } else if (addState.tab === 'text') {
       const content = $('add-text').value.trim();
       const sourceUrl = $('add-text-src').value.trim();
