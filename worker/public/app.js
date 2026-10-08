@@ -529,6 +529,50 @@ function renderList(items, reset) {
 
 /* ---------------- 侧栏 / 筛选 ---------------- */
 
+const FOLD_KEY = 'ls_side_fold';
+
+function loadFoldState() {
+  try { return JSON.parse(localStorage.getItem(FOLD_KEY)) || {}; } catch { return {}; }
+}
+
+// 当前筛选命中的板块强制展开，避免看不到选中项；其余按用户记忆的折叠状态恢复
+function applyFoldStates() {
+  const map = loadFoldState();
+  const forced = {
+    'sec-site-cats': !!state.category,
+    'sec-article-months': !!state.month,
+    'sec-text-months': state.snipMonth && state.type === 'text',
+    'sec-image-months': state.snipMonth && state.type === 'image',
+  };
+  Object.keys(forced).forEach((id) => {
+    const sec = $(id);
+    if (!sec) return;
+    const collapsed = forced[id] ? false : !!map[id];
+    sec.classList.toggle('collapsed', collapsed);
+    sec.querySelector('.side-head')?.setAttribute('aria-expanded', String(!collapsed));
+  });
+}
+
+function toggleFold(sec) {
+  const collapsed = !sec.classList.contains('collapsed');
+  sec.classList.toggle('collapsed', collapsed);
+  const map = loadFoldState();
+  map[sec.id] = collapsed;
+  try { localStorage.setItem(FOLD_KEY, JSON.stringify(map)); } catch {}
+  sec.querySelector('.side-head')?.setAttribute('aria-expanded', String(!collapsed));
+}
+
+function bindSidebarFold() {
+  document.querySelectorAll('.side-head').forEach((head) => {
+    const sec = head.closest('.side-section');
+    if (!sec) return;
+    head.addEventListener('click', () => toggleFold(sec));
+    head.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggleFold(sec); }
+    });
+  });
+}
+
 function monthBtns(list, stype) {
   return list.length
     ? list.map((m) => `<button class="side-item${state.snipMonth === m.month && state.type === stype ? ' active' : ''}" data-smonth="${esc(m.month)}" data-stype="${stype}">
@@ -560,6 +604,14 @@ function renderSidebar() {
 
   $('text-month-list').innerHTML = monthBtns(textMonths, 'text');
   $('image-month-list').innerHTML = monthBtns(imageMonths, 'image');
+
+  // 折叠时标题上的板块计数仍可见，便于判断各收藏量
+  $('cnt-site-cats').textContent = cats.length || '';
+  $('cnt-article-months').textContent = months.length || '';
+  $('cnt-text-months').textContent = textMonths.length || '';
+  $('cnt-image-months').textContent = imageMonths.length || '';
+
+  applyFoldStates();
 }
 
 function renderTypeChips() {
@@ -652,6 +704,8 @@ function bindEvents() {
       return applyFilter({ type: smonth.dataset.stype, snipMonth: toggle, category: '', month: '' });
     }
   });
+
+  bindSidebarFold();
 
   $('active-filters').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-clear]');

@@ -267,6 +267,15 @@ button { font-family: inherit; }
 .side-count { color: var(--faint); font-size: 12px; flex-shrink: 0; }
 .side-empty { color: var(--faint); font-size: 13px; padding: 4px 10px; }
 
+/* 侧栏板块折叠：点标题收起/展开，状态本地记忆 */
+.side-head { display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none; }
+.side-head:hover { color: var(--text); }
+.side-head:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px; }
+.side-head .side-count { font-weight: 400; letter-spacing: 0; }
+.side-arrow { margin-left: auto; font-size: 10px; color: var(--faint); transition: transform .15s ease; }
+.side-section.collapsed .side-list { display: none; }
+.side-section.collapsed .side-arrow { transform: rotate(-90deg); }
+
 /* ---------- 工具栏 ---------- */
 /* 第一行：类型切换；第二行：搜索 + 日期筛选 */
 .toolbar { margin-bottom: 10px; }
