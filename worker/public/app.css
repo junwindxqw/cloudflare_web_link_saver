@@ -217,12 +217,14 @@ button { font-family: inherit; }
 .btn-theme { padding: 5px 9px; font-size: 14px; line-height: 1; }
 
 /* ---------- 布局 ---------- */
+/* minmax(0, 1fr)：1fr 等价于 minmax(auto, 1fr)，会被长标题等内容的
+   最小内容宽度撑破 1100px 容器，导致搜索条和列表右侧溢出 */
 .layout {
   max-width: 1100px;
   margin: 0 auto;
   padding: 20px;
   display: grid;
-  grid-template-columns: 240px 1fr;
+  grid-template-columns: 240px minmax(0, 1fr);
   gap: 24px;
   align-items: start;
 }
@@ -235,6 +237,7 @@ button { font-family: inherit; }
   top: 72px;
   max-height: calc(100vh - 96px);
   overflow: auto;
+  min-width: 0;
 }
 .side-section + .side-section { margin-top: 20px; }
 .side-section h2 {
@@ -263,7 +266,8 @@ button { font-family: inherit; }
 .side-item:hover { background: var(--primary-weak); }
 .side-item.active { background: var(--primary); color: #fff; }
 .side-item.active .side-count { color: rgba(255, 255, 255, 0.85); }
-.side-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* min-width:0 让超长分类名在 240px 侧栏内正确省略，而不是把网格列顶宽 */
+.side-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .side-count { color: var(--faint); font-size: 12px; flex-shrink: 0; }
 .side-empty { color: var(--faint); font-size: 13px; padding: 4px 10px; }
 
@@ -465,6 +469,20 @@ button { font-family: inherit; }
 }
 .item-del:hover { color: var(--danger); background: var(--danger-weak); }
 
+/* ---------- 文章视图：紧凑单行 ---------- */
+/* 文章视图里每条都是文章，类型角标冗余；改为单行排列，一屏看更多 */
+.list[data-view="article"] { gap: 6px; }
+.list[data-view="article"] .item { padding: 7px 10px; gap: 9px; align-items: center; }
+.list[data-view="article"] .fav { width: 24px; height: 24px; border-radius: 6px; font-size: 12px; }
+.list[data-view="article"] .badge { display: none; }
+.list[data-view="article"] .item-main { display: flex; align-items: center; gap: 8px; }
+.list[data-view="article"] .item-title { flex: 1; min-width: 0; font-size: 14px; }
+.list[data-view="article"] .item-meta { margin-top: 0; font-size: 12px; gap: 6px; flex-wrap: nowrap; flex-shrink: 0; }
+.list[data-view="article"] .item-meta > span { white-space: nowrap; }
+.list[data-view="article"] .item-note { max-width: 120px; }
+.list[data-view="article"] .item-del { font-size: 14px; }
+.list[data-view="article"] .group-header { margin: 8px 0 0; }
+
 /* ---------- 选中的短文本 / 图片 ---------- */
 .item.snippet .item-main { display: flex; flex-direction: column; gap: 8px; }
 
@@ -509,6 +527,74 @@ button { font-family: inherit; }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ---------- 网站视图：图标磁贴网格 ---------- */
+.site-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(86px, 1fr));
+  gap: 10px;
+}
+.site-tile { position: relative; min-width: 0; }
+.site-tile-link {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  height: 100%;
+  padding: 12px 6px 10px;
+  background: var(--card);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+  color: var(--muted);
+  text-align: center;
+}
+.site-tile-link:hover { background: var(--primary-weak); text-decoration: none; }
+.site-tile .fav { width: 40px; height: 40px; border-radius: 10px; font-size: 17px; }
+.site-tile-name { font-size: 12px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 备注标记独立于链接，避免就地编辑输入框嵌在 <a> 里 */
+.site-tile-note { position: absolute; right: 6px; bottom: 6px; font-size: 11px; line-height: 1; cursor: pointer; }
+.site-tile-del { position: absolute; top: 3px; right: 3px; opacity: 0; background: var(--card); box-shadow: var(--shadow-card); }
+.site-tile:hover .site-tile-del, .site-tile-del:focus-visible { opacity: 1; }
+@media (hover: none) { .site-tile-del { opacity: 0.7; } }
+/* 磁贴内就地编辑备注时输入框占满磁贴宽度 */
+.site-tile .note-input { position: absolute; left: 6px; right: 6px; bottom: 6px; width: auto; }
+
+/* ---------- 图片视图：瀑布流 ---------- */
+/* 多列瀑布流：列宽优先（240px），桌面约 3 列，窄屏自动减少 */
+.image-grid { columns: 3 240px; column-gap: 12px; }
+.img-card {
+  position: relative;
+  break-inside: avoid;
+  margin: 0 0 12px;
+  background: var(--card);
+  border-radius: 10px;
+  box-shadow: var(--shadow-card);
+  overflow: hidden;
+}
+.img-card .snip-thumb { display: block; width: 100%; height: auto; cursor: zoom-in; background: var(--input-bg); }
+.img-card .item-del { position: absolute; top: 6px; right: 6px; opacity: 0; background: var(--card); box-shadow: var(--shadow-card); }
+.img-card:hover .item-del, .img-card .item-del:focus-visible { opacity: 1; }
+.img-card-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.img-card-meta .snip-source { max-width: 60%; }
+.img-card.broken::before {
+  content: '图片已失效或加载失败';
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 30px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  color: var(--faint);
+  font-size: 12.5px;
+}
+.img-card.broken img, .img-card.broken .img-card-meta { display: none; }
 
 .img-lightbox {
   position: fixed;
@@ -643,7 +729,7 @@ button { font-family: inherit; }
 /* ---------- 移动端 ---------- */
 @media (max-width: 768px) {
   .layout {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
     gap: 12px;
     padding: 12px;
   }
@@ -664,10 +750,18 @@ button { font-family: inherit; }
     flex-shrink: 0;
   }
   .side-item.active { border-color: var(--primary); }
-  .topbar-inner { padding: 10px 14px; }
+  .topbar-inner { padding: 10px 14px; gap: 8px; flex-wrap: wrap; }
+  .topbar-right { gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
   .user-email { max-width: 120px; }
   .toolbar { margin-bottom: 8px; }
   .filters-row { flex-wrap: wrap; margin-bottom: 10px; }
   .chip { flex: 1; text-align: center; white-space: nowrap; }
+  /* 移动端文章行改回两行：窄屏下单行会把标题挤没，可读性优先 */
+  .list[data-view="article"] .item { align-items: flex-start; padding: 9px 10px; }
+  .list[data-view="article"] .item-main { display: block; }
+  .list[data-view="article"] .item-meta { margin-top: 3px; flex-wrap: wrap; flex-shrink: 1; }
   .item { padding: 12px 12px; }
+  .site-grid { grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 8px; }
+  .image-grid { columns: 2 150px; column-gap: 10px; }
+  .img-card { margin-bottom: 10px; }
 }

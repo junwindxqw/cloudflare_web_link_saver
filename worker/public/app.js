@@ -465,6 +465,37 @@ function snippetHtml(it) {
   </div>`;
 }
 
+// 网站视图：图标 + 域名的紧凑磁贴，点击新窗口打开；有备注时右下角显示 🏷（点击可编辑）
+function siteTileHtml(it) {
+  const note = it.note
+    ? `<span class="site-tile-note" data-note-edit data-note="${esc(it.note)}" title="${esc(it.note)}（点击编辑）">🏷</span>`
+    : '';
+  const tip = `${it.title || it.url}${it.note ? `｜备注：${it.note}` : ''}`;
+  return `<div class="site-tile" data-id="${it.id}" data-kind="link" title="${esc(tip)}">
+    <a class="site-tile-link" href="${esc(it.url)}" target="_blank" rel="noopener noreferrer">
+      ${faviconHtml(it.domain)}
+      <span class="site-tile-name">${esc(it.domain)}</span>
+    </a>
+    ${note}
+    <button class="item-del site-tile-del" title="删除" aria-label="删除">✕</button>
+  </div>`;
+}
+
+// 图片视图：瀑布流卡片，图片按原始比例展示，点击放大，悬停出现删除
+function imageCardHtml(it) {
+  const img = it.storage_key
+    ? `<img class="snip-thumb" data-snip-id="${it.id}" alt="收藏图片" loading="lazy" />`
+    : `<img class="snip-thumb" src="${esc(it.content)}" referrerpolicy="no-referrer" alt="收藏图片" loading="lazy" onerror="this.closest('.img-card').classList.add('broken')" />`;
+  const source = it.source_url
+    ? `<a href="${esc(it.source_url)}" target="_blank" rel="noopener noreferrer" title="${esc(it.source_title || it.source_url)}">${esc(it.source_title || it.source_url)}</a>`
+    : '';
+  return `<figure class="img-card" data-id="${it.id}" data-kind="snippet">
+    ${img}
+    <button class="item-del" title="删除" aria-label="删除">✕</button>
+    <figcaption class="img-card-meta"><span>${fmtDate(it.created_at)}</span>${source ? `<span class="snip-source">${source}</span>` : ''}</figcaption>
+  </figure>`;
+}
+
 // 已转存图片需带 Authorization 拉取二进制，这里统一换取 objectURL
 async function hydrateSnippetImages() {
   for (const img of document.querySelectorAll('#list img.snip-thumb[data-snip-id]')) {
@@ -482,31 +513,52 @@ async function hydrateSnippetImages() {
       snippetImgUrls.set(id, url);
       img.src = url;
     } catch {
-      img.closest('.snip-img')?.classList.add('broken');
+      img.closest('.snip-img, .img-card')?.classList.add('broken');
       img.remove();
     }
   }
 }
 
+// 网站 / 图片视图用网格容器承载，"加载更多"时追加进同一网格
+function appendGrid(listEl, cls, nodesHtml) {
+  if (!nodesHtml) return;
+  let grid = listEl.querySelector(`:scope > .${cls}`);
+  if (!grid) {
+    grid = document.createElement('div');
+    grid.className = cls;
+    listEl.appendChild(grid);
+  }
+  grid.insertAdjacentHTML('beforeend', nodesHtml);
+}
+
 function renderList(items, reset) {
   const listEl = $('list');
+  listEl.dataset.view = state.type;
   if (reset) listEl.innerHTML = '';
 
-  let html = '';
-  let lastMonth = null;
-  // 文章视图按月份归档展示
-  const groupByMonth = state.type === 'article';
-  for (const it of items) {
-    if (groupByMonth) {
-      const m = (it.created_at || '').slice(0, 7);
-      if (m && m !== lastMonth) {
-        html += `<div class="group-header">${esc(monthLabel(m))}</div>`;
-        lastMonth = m;
+  if (state.type === 'site') {
+    // 网站视图：只放图标 + 域名的磁贴网格，一屏看更多
+    appendGrid(listEl, 'site-grid', items.map(siteTileHtml).join(''));
+  } else if (state.type === 'image') {
+    // 图片视图：瀑布流
+    appendGrid(listEl, 'image-grid', items.map(imageCardHtml).join(''));
+  } else {
+    let html = '';
+    let lastMonth = null;
+    // 文章视图按月份归档展示
+    const groupByMonth = state.type === 'article';
+    for (const it of items) {
+      if (groupByMonth) {
+        const m = (it.created_at || '').slice(0, 7);
+        if (m && m !== lastMonth) {
+          html += `<div class="group-header">${esc(monthLabel(m))}</div>`;
+          lastMonth = m;
+        }
       }
+      html += isSnippetItem(it) ? snippetHtml(it) : itemHtml(it);
     }
-    html += isSnippetItem(it) ? snippetHtml(it) : itemHtml(it);
+    listEl.insertAdjacentHTML('beforeend', html);
   }
-  listEl.insertAdjacentHTML('beforeend', html);
 
   const empty = $('list-empty');
   if (listEl.children.length === 0) {
@@ -728,8 +780,11 @@ function bindEvents() {
   $('list').addEventListener('click', async (e) => {
     const del = e.target.closest('.item-del');
     if (del) {
-      const itemEl = del.closest('.item');
-      const isSnippet = itemEl.classList.contains('snippet');
+      e.preventDefault(); // 阻止按钮默认行为，避免误触卡片上的链接
+      // 卡片列表 / 网站磁贴 / 瀑布流卡片三种结构统一按 data-id 定位
+      const itemEl = del.closest('[data-id]');
+      if (!itemEl) return;
+      const isSnippet = itemEl.classList.contains('snippet') || itemEl.dataset.kind === 'snippet';
       if (!confirm(isSnippet ? '确定删除这条内容吗？' : '确定删除这条收藏吗？')) return;
       const id = itemEl.dataset.id;
       try {
@@ -756,6 +811,7 @@ function bindEvents() {
     }
     const noteChip = e.target.closest('[data-note-edit]');
     if (noteChip) {
+      e.preventDefault(); // 磁贴的备注标记包在链接里，阻止跳转
       startNoteEdit(noteChip);
       return;
     }
@@ -984,7 +1040,8 @@ async function afterManualSave(message, switchType) {
 
 // 点击备注标签 → 就地变为输入框：Enter 保存、Esc 取消、失焦取消
 function startNoteEdit(chip) {
-  const itemEl = chip.closest('.item');
+  // 卡片列表 / 网站磁贴两种结构都带 data-id
+  const itemEl = chip.closest('.item, .site-tile');
   const id = itemEl?.dataset.id;
   if (!id) return;
   const current = chip.dataset.note || '';
