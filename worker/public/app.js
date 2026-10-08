@@ -12,14 +12,17 @@ const PAGE_SIZE = 50;
 const state = {
   token: localStorage.getItem(TOKEN_KEY) || '',
   email: '',
-  type: 'site', // site | article（链接） | text | image（选中内容）
+  type: 'site', // site | article（链接） | text | image（片段） | ''（备注筛选的混合视图）
   category: '',
   month: '',
   snipMonth: '', // 纯文本 / 图片视图的月份归档筛选
+  note: '',      // 备注筛选：跨链接与片段的混合视图
   days: 0,       // 日期快速筛选（近 N 天，0 = 全部时间）
   q: '',
   offset: 0,
   total: 0,
+  linkOffset: 0,  // 备注混合视图下两个数据源各自的分页游标
+  snipOffset: 0,
   overview: null,
   loading: false,
   pendingReset: false,
@@ -339,13 +342,30 @@ async function loadList(reset = false) {
   }
   state.loading = true;
   try {
-    const offset = reset ? 0 : state.offset;
-    const data = isSnippetType(state.type)
-      ? await api(`/snippets?${listQs({ type: state.type, limit: PAGE_SIZE, offset })}`)
-      : await api(`/links?${listQs({ type: state.type, limit: PAGE_SIZE, offset })}`);
-    state.total = data.total;
-    state.offset = offset + data.items.length;
-    renderList(data.items, reset);
+    if (state.note && !state.type) {
+      // 备注筛选的混合视图：链接 + 片段两个来源并行分页，按时间归并
+      const lOffset = reset ? 0 : state.linkOffset;
+      const sOffset = reset ? 0 : state.snipOffset;
+      const [lData, sData] = await Promise.all([
+        api(`/links?${listQs({ type: 'all', limit: PAGE_SIZE, offset: lOffset })}`),
+        api(`/snippets?${listQs({ limit: PAGE_SIZE, offset: sOffset })}`),
+      ]);
+      state.linkOffset = lOffset + lData.items.length;
+      state.snipOffset = sOffset + sData.items.length;
+      state.total = lData.total + sData.total;
+      state.offset = state.linkOffset + state.snipOffset;
+      const merged = [...lData.items, ...sData.items].sort((a, b) =>
+        (b.created_at || '').localeCompare(a.created_at || '') || (b.id - a.id));
+      renderList(merged, reset);
+    } else {
+      const offset = reset ? 0 : state.offset;
+      const data = isSnippetType(state.type)
+        ? await api(`/snippets?${listQs({ type: state.type, limit: PAGE_SIZE, offset })}`)
+        : await api(`/links?${listQs({ type: state.type, limit: PAGE_SIZE, offset })}`);
+      state.total = data.total;
+      state.offset = offset + data.items.length;
+      renderList(data.items, reset);
+    }
   } catch (e) {
     if (e.status === 401) return logout();
     showToast(e.message);
@@ -358,11 +378,12 @@ async function loadList(reset = false) {
   }
 }
 
-// 列表接口公共筛选参数（搜索 / 日期 / 片段月份）；分类与文章月份仅链接支持
+// 列表接口公共筛选参数（搜索 / 日期 / 片段月份 / 备注）；分类与文章月份仅链接支持
 function listQs(base) {
   const params = new URLSearchParams(base);
   if (state.q) params.set('q', state.q);
   if (state.days) params.set('days', String(state.days));
+  if (state.note) params.set('note', state.note);
   if (isSnippetType(state.type)) {
     if (state.snipMonth) params.set('month', state.snipMonth);
   } else {
@@ -428,13 +449,16 @@ function snippetHtml(it) {
   } else {
     body = `<div class="snip-text">${esc(it.content)}</div>`;
   }
+  const note = it.note
+    ? `<button class="item-note" data-note-edit data-note="${esc(it.note)}" title="点击编辑备注">🏷 ${esc(it.note)}</button>`
+    : `<button class="item-note add" data-note-edit data-note="" title="添加备注">＋ 备注</button>`;
   const source = it.source_url
     ? `<a href="${esc(it.source_url)}" target="_blank" rel="noopener noreferrer" title="${esc(it.source_title || it.source_url)}">${esc(it.source_title || it.source_url)}</a>`
     : '';
-  return `<div class="item snippet" data-id="${it.id}">
+  return `<div class="item snippet" data-id="${it.id}" data-kind="snippet">
     <div class="item-main">
       ${body}
-      <div class="item-meta">${badge}${source ? `<span class="snip-source">${source}</span>` : ''}<span>${fmtDate(it.created_at)}</span></div>
+      <div class="item-meta">${badge}${note}${source ? `<span class="snip-source">${source}</span>` : ''}<span>${fmtDate(it.created_at)}</span></div>
     </div>
     <button class="item-del" title="删除" aria-label="删除">✕</button>
   </div>`;
@@ -461,13 +485,16 @@ function imageCardHtml(it) {
   const img = it.storage_key
     ? `<img class="snip-thumb" data-snip-id="${it.id}" alt="收藏图片" loading="lazy" />`
     : `<img class="snip-thumb" src="${esc(it.content)}" referrerpolicy="no-referrer" alt="收藏图片" loading="lazy" onerror="this.closest('.img-card').classList.add('broken')" />`;
+  const note = it.note
+    ? `<span class="img-card-note" data-note-edit data-note="${esc(it.note)}" title="${esc(it.note)}（点击编辑）">🏷 ${esc(it.note)}</span>`
+    : '';
   const source = it.source_url
     ? `<a href="${esc(it.source_url)}" target="_blank" rel="noopener noreferrer" title="${esc(it.source_title || it.source_url)}">${esc(it.source_title || it.source_url)}</a>`
     : '';
   return `<figure class="img-card" data-id="${it.id}" data-kind="snippet">
     ${img}
     <button class="item-del" title="删除" aria-label="删除">✕</button>
-    <figcaption class="img-card-meta"><span>${fmtDate(it.created_at)}</span>${source ? `<span class="snip-source">${source}</span>` : ''}</figcaption>
+    <figcaption class="img-card-meta">${note}<span>${fmtDate(it.created_at)}</span>${source ? `<span class="snip-source">${source}</span>` : ''}</figcaption>
   </figure>`;
 }
 
@@ -508,7 +535,8 @@ function appendGrid(listEl, cls, nodesHtml) {
 
 function renderList(items, reset) {
   const listEl = $('list');
-  listEl.dataset.view = state.type;
+  // 备注筛选的混合视图没有类型，data-view 用 mixed（默认卡片样式，保留类型角标）
+  listEl.dataset.view = state.type || 'mixed';
   if (reset) listEl.innerHTML = '';
 
   if (state.type === 'site') {
@@ -544,6 +572,8 @@ function renderList(items, reset) {
     const filtered = !!(state.category || state.month || state.snipMonth || state.q || state.days);
     if (!hasAny) {
       empty.textContent = '还没有收藏：安装扩展后右键「Send to Link Saver」，或点右上角「＋ 添加」手动保存';
+    } else if (state.note) {
+      empty.textContent = `备注「${state.note}」下还没有内容`;
     } else if (filtered) {
       empty.textContent = '没有符合条件的收藏';
     } else if (isSnippetType(state.type)) {
@@ -578,6 +608,7 @@ function applyFoldStates() {
     'sec-article-months': !!state.month,
     'sec-text-months': state.snipMonth && state.type === 'text',
     'sec-image-months': state.snipMonth && state.type === 'image',
+    'sec-notes': !!state.note,
   };
   Object.keys(forced).forEach((id) => {
     const sec = $(id);
@@ -620,12 +651,14 @@ function renderSidebar() {
   const months = state.overview?.months ?? [];
   const textMonths = state.overview?.textMonths ?? [];
   const imageMonths = state.overview?.imageMonths ?? [];
+  const notes = state.overview?.notes ?? [];
 
-  // 四个侧栏板块常驻（与文章归档一致），点击月份归档会切换到对应视图
+  // 侧栏板块常驻（与文章归档一致），点击月份归档会切换到对应视图
   $('sec-site-cats').classList.remove('hidden');
   $('sec-article-months').classList.remove('hidden');
   $('sec-text-months').classList.remove('hidden');
   $('sec-image-months').classList.remove('hidden');
+  $('sec-notes').classList.remove('hidden');
 
   $('site-cats').innerHTML = cats.length
     ? cats.map((c) => `<button class="side-item${state.category === c.name ? ' active' : ''}" data-cat="${esc(c.name)}">
@@ -640,11 +673,18 @@ function renderSidebar() {
   $('text-month-list').innerHTML = monthBtns(textMonths, 'text');
   $('image-month-list').innerHTML = monthBtns(imageMonths, 'image');
 
+  // 备注去重列表：跨网站/文章/纯文本/图片，点击进混合视图
+  $('note-list').innerHTML = notes.length
+    ? notes.map((n) => `<button class="side-item${state.note === n.name ? ' active' : ''}" data-note="${esc(n.name)}">
+        <span class="side-name">🏷 ${esc(n.name)}</span><span class="side-count">${n.count}</span></button>`).join('')
+    : '<div class="side-empty">暂无备注</div>';
+
   // 折叠时标题上的板块计数仍可见，便于判断各收藏量
   $('cnt-site-cats').textContent = cats.length || '';
   $('cnt-article-months').textContent = months.length || '';
   $('cnt-text-months').textContent = textMonths.length || '';
   $('cnt-image-months').textContent = imageMonths.length || '';
+  $('cnt-notes').textContent = notes.length || '';
 
   applyFoldStates();
 }
@@ -673,6 +713,7 @@ function renderActiveFilters() {
   if (state.category) tags.push({ key: 'category', label: `网站：${state.category}` });
   if (state.month) tags.push({ key: 'month', label: `归档：${monthLabel(state.month)}` });
   if (state.snipMonth) tags.push({ key: 'snipMonth', label: `归档：${monthLabel(state.snipMonth)}` });
+  if (state.note) tags.push({ key: 'note', label: `备注：${state.note}` });
   if (state.days) tags.push({ key: 'days', label: `时间：${DAYS_LABEL[state.days] || `近 ${state.days} 天`}` });
   if (state.q) tags.push({ key: 'q', label: `搜索：${state.q}` });
   box.innerHTML = tags
@@ -725,7 +766,7 @@ function bindEvents() {
     $('search-input').value = '';
     $('date-select').value = '0';
     window.scrollTo({ top: 0 });
-    applyFilter({ type: 'site', category: '', month: '', snipMonth: '', days: 0, q: '' });
+    applyFilter({ type: 'site', category: '', month: '', snipMonth: '', note: '', days: 0, q: '' });
     showToast('已重置为网站列表');
   };
   const logo = $('logo-home');
@@ -750,6 +791,12 @@ function bindEvents() {
       // 点击纯文本/图片的月份归档：切换到对应视图并按月份筛选，再点一次取消筛选
       const toggle = state.snipMonth === smonth.dataset.smonth && state.type === smonth.dataset.stype ? '' : smonth.dataset.smonth;
       return applyFilter({ type: smonth.dataset.stype, snipMonth: toggle, category: '', month: '' });
+    }
+    const noteItem = e.target.closest('[data-note]');
+    if (noteItem) {
+      // 点击备注：进入跨类型的混合视图，再点一次取消；备注下也可用类型 chip 继续筛选
+      const n = noteItem.dataset.note;
+      return applyFilter({ type: '', category: '', month: '', snipMonth: '', note: state.note === n ? '' : n });
     }
   });
 
@@ -891,7 +938,7 @@ function setAddMsg(text, info = false) {
 function openAddModal() {
   addState.tab = 'link';
   addState.image = null;
-  for (const id of ['add-link-url', 'add-link-title', 'add-link-note', 'add-art-url', 'add-art-title', 'add-art-note']) {
+  for (const id of ['add-link-url', 'add-link-title', 'add-link-note', 'add-art-url', 'add-art-title', 'add-art-note', 'add-text-note', 'add-img-note']) {
     $(id).value = '';
   }
   $('add-text').value = '';
@@ -1010,12 +1057,14 @@ async function saveFromAddModal() {
     } else if (addState.tab === 'text') {
       const content = $('add-text').value.trim();
       const sourceUrl = $('add-text-src').value.trim();
+      const note = $('add-text-note').value.trim();
       if (!content) return setAddMsg('请输入内容');
-      const data = await api('/snippets', { method: 'POST', body: { type: 'text', content: content.slice(0, 10000), source_url: sourceUrl } });
+      const data = await api('/snippets', { method: 'POST', body: { type: 'text', content: content.slice(0, 10000), source_url: sourceUrl, note } });
       await afterManualSave(`已保存纯文本（${Math.min(content.length, 10000)} 字）`, 'text');
     } else {
       if (!addState.image) return setAddMsg('请先粘贴或选择图片');
-      const data = await api('/snippets', { method: 'POST', body: { type: 'image', content: addState.image.dataUrl } });
+      const note = $('add-img-note').value.trim();
+      const data = await api('/snippets', { method: 'POST', body: { type: 'image', content: addState.image.dataUrl, note } });
       await afterManualSave(data.stored ? '图片已转存到服务端' : '图片已保存', 'image');
     }
   } catch (e) {
@@ -1038,10 +1087,11 @@ async function afterManualSave(message, switchType) {
 
 // 点击备注标签 → 就地变为输入框：Enter 保存、Esc 取消、失焦取消
 function startNoteEdit(chip) {
-  // 卡片列表 / 网站磁贴两种结构都带 data-id
-  const itemEl = chip.closest('.item, .site-tile');
-  const id = itemEl?.dataset.id;
-  if (!id) return;
+  // 卡片 / 磁贴 / 瀑布流三种结构都带 data-id，片段类走 snippets 接口
+  const itemEl = chip.closest('[data-id]');
+  if (!itemEl) return;
+  const id = itemEl.dataset.id;
+  const kind = itemEl.dataset.kind === 'snippet' ? 'snippets' : 'links';
   const current = chip.dataset.note || '';
 
   const input = document.createElement('input');
@@ -1061,11 +1111,19 @@ function startNoteEdit(chip) {
     const val = input.value.trim();
     input.replaceWith(chip);
     if (!save || val === current) return;
-    api(`/links/${id}`, { method: 'PATCH', body: { note: val } })
+    api(`/${kind}/${id}`, { method: 'PATCH', body: { note: val } })
       .then((data) => {
-        chip.dataset.note = data.note;
-        chip.textContent = data.note ? `🏷 ${data.note}` : '＋ 备注';
-        chip.classList.toggle('add', !data.note);
+        // 瀑布流卡片清空备注后直接摘掉标签，避免留下「＋ 备注」
+        if (!data.note && chip.classList.contains('img-card-note')) {
+          chip.remove();
+        } else {
+          chip.dataset.note = data.note;
+          chip.textContent = data.note ? `🏷 ${data.note}` : '＋ 备注';
+          chip.classList.toggle('add', !data.note);
+        }
+        // 侧栏备注列表与计数来自 overview，编辑后需刷新；备注筛选视图还要重拉列表
+        refreshOverview();
+        if (state.note) loadList(true);
       })
       .catch((e) => {
         if (e.status === 401) return logout();

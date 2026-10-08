@@ -36,14 +36,19 @@ snippetRoutes.post('/', async (c) => {
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, 300);
+  // 备注与链接一致：用户自行标识（如「待读」），可空
+  const note = (typeof body?.note === 'string' ? body.note : '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 200);
 
   const userId = c.get('userId');
 
   if (type === 'text') {
     const res = await c.env.DB.prepare(
-      'INSERT INTO snippets (user_id, type, content, source_url, source_title) VALUES (?, ?, ?, ?, ?)',
+      'INSERT INTO snippets (user_id, type, content, source_url, source_title, note) VALUES (?, ?, ?, ?, ?, ?)',
     )
-      .bind(userId, 'text', content.slice(0, MAX_TEXT_CHARS), sourceUrl, sourceTitle)
+      .bind(userId, 'text', content.slice(0, MAX_TEXT_CHARS), sourceUrl, sourceTitle, note)
       .run();
     return c.json({ ok: true, id: res.meta.last_row_id, stored: true });
   }
@@ -72,11 +77,11 @@ snippetRoutes.post('/', async (c) => {
   if (saveError) return c.json({ error: saveError }, 400);
 
   const res = await c.env.DB.prepare(
-    `INSERT INTO snippets (user_id, type, content, storage_key, mime, bytes, source_url, source_title)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO snippets (user_id, type, content, storage_key, mime, bytes, source_url, source_title, note)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   )
     // data: URL 可能非常大不落库；远程地址保留原始外链，KV 未命中时可回退
-    .bind(userId, 'image', isDataUrl ? '' : content, stored?.key ?? '', stored?.mime ?? '', stored?.bytes ?? 0, sourceUrl, sourceTitle)
+    .bind(userId, 'image', isDataUrl ? '' : content, stored?.key ?? '', stored?.mime ?? '', stored?.bytes ?? 0, sourceUrl, sourceTitle, note)
     .run();
 
   return c.json({ ok: true, id: res.meta.last_row_id, stored: Boolean(stored), mime: stored?.mime ?? '', bytes: stored?.bytes ?? 0 });
@@ -87,6 +92,7 @@ snippetRoutes.get('/', async (c) => {
   const rawType = c.req.query('type') || '';
   const type = rawType === 'text' || rawType === 'image' ? rawType : '';
   const q = c.req.query('q')?.trim() || '';
+  const note = c.req.query('note')?.trim() || '';
   const month = c.req.query('month')?.trim() || '';
   const days = Math.min(Math.max(Number(c.req.query('days')) || 0, 0), 3650);
   const limit = Math.min(Math.max(Number(c.req.query('limit')) || 50, 1), 100);
@@ -98,6 +104,10 @@ snippetRoutes.get('/', async (c) => {
     where.push('type = ?');
     binds.push(type);
   }
+  if (note) {
+    where.push('note = ?');
+    binds.push(note);
+  }
   if (month) {
     where.push("strftime('%Y-%m', created_at) = ?");
     binds.push(month);
@@ -107,10 +117,10 @@ snippetRoutes.get('/', async (c) => {
     binds.push(`-${days} days`);
   }
   if (q) {
-    // 与链接列表一致：转义 LIKE 通配符，按字面匹配
+    // 与链接列表一致：转义 LIKE 通配符，按字面匹配；备注也参与搜索
     const like = `%${q.replace(/[\\%_]/g, (m) => `\\${m}`)}%`;
-    where.push(`(content LIKE ? ESCAPE '\\' OR source_title LIKE ? ESCAPE '\\' OR source_url LIKE ? ESCAPE '\\')`);
-    binds.push(like, like, like);
+    where.push(`(content LIKE ? ESCAPE '\\' OR source_title LIKE ? ESCAPE '\\' OR source_url LIKE ? ESCAPE '\\' OR note LIKE ? ESCAPE '\\')`);
+    binds.push(like, like, like, like);
   }
 
   const whereSql = where.join(' AND ');
@@ -119,7 +129,7 @@ snippetRoutes.get('/', async (c) => {
       .bind(...binds)
       .first<{ total: number }>(),
     c.env.DB.prepare(
-      `SELECT id, type, content, storage_key, mime, bytes, source_url, source_title, created_at
+      `SELECT id, type, content, storage_key, mime, bytes, source_url, source_title, note, created_at
        FROM snippets WHERE ${whereSql}
        ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
     )
@@ -133,11 +143,26 @@ snippetRoutes.get('/', async (c) => {
         bytes: number;
         source_url: string;
         source_title: string;
+        note: string;
         created_at: string;
       }>(),
   ]);
 
   return c.json({ ok: true, items: rows.results ?? [], total: countRow?.total ?? 0, limit, offset });
+});
+
+// 网页端编辑纯文本 / 图片的备注（留空即清除）
+snippetRoutes.patch('/:id', async (c) => {
+  const id = Number(c.req.param('id'));
+  if (!Number.isInteger(id) || id <= 0) return c.json({ error: '参数不正确' }, 400);
+  const body = await c.req.json().catch(() => ({}));
+  if (typeof body.note !== 'string') return c.json({ error: '缺少 note 参数' }, 400);
+  const note = body.note.replace(/\s+/g, ' ').trim().slice(0, 200);
+  const result = await c.env.DB.prepare('UPDATE snippets SET note = ? WHERE id = ? AND user_id = ?')
+    .bind(note, id, c.get('userId'))
+    .run();
+  if (!result.meta.changes) return c.json({ error: '记录不存在' }, 404);
+  return c.json({ ok: true, note });
 });
 
 // 已转存图片的读取入口：仅本人可读；存储未命中时回退到原始外链

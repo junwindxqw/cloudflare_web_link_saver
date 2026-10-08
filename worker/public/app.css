@@ -585,6 +585,17 @@ button { font-family: inherit; }
   color: var(--muted);
 }
 .img-card-meta .snip-source { max-width: 60%; }
+/* 瀑布流卡片上的备注标记（点击可就地编辑） */
+.img-card-note {
+  color: #c2410c;
+  cursor: pointer;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+[data-theme="dark"] .img-card-note { color: #fdba74; }
 .img-card.broken::before {
   content: '图片已失效或加载失败';
   display: flex;

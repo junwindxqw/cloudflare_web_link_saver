@@ -100,6 +100,7 @@ linkRoutes.get('/', async (c) => {
   const month = c.req.query('month')?.trim() || '';
   const days = Math.min(Math.max(Number(c.req.query('days')) || 0, 0), 3650);
   const q = c.req.query('q')?.trim() || '';
+  const note = c.req.query('note')?.trim() || '';
   const limit = Math.min(Math.max(Number(c.req.query('limit')) || 50, 1), 100);
   const offset = Math.max(Number(c.req.query('offset')) || 0, 0);
 
@@ -108,6 +109,10 @@ linkRoutes.get('/', async (c) => {
   if (type === 'site' || type === 'article') {
     where.push('type = ?');
     binds.push(type);
+  }
+  if (note) {
+    where.push('note = ?');
+    binds.push(note);
   }
   if (category) {
     where.push('category = ?');
@@ -162,7 +167,7 @@ linkRoutes.get('/', async (c) => {
 
 linkRoutes.get('/overview', async (c) => {
   const userId = c.get('userId');
-  const [typeCounts, categories, months, snippetCounts, textMonths, imageMonths] = await Promise.all([
+  const [typeCounts, categories, months, snippetCounts, textMonths, imageMonths, noteRows] = await Promise.all([
     c.env.DB.prepare(`SELECT type, COUNT(*) AS count FROM links WHERE user_id = ? GROUP BY type`).bind(userId).all<{
       type: 'site' | 'article';
       count: number;
@@ -195,6 +200,16 @@ linkRoutes.get('/overview', async (c) => {
     )
       .bind(userId)
       .all<{ month: string; count: number }>(),
+    // 备注去重列表：链接与片段来源合并计数，同一备注只出现一次
+    c.env.DB.prepare(
+      `SELECT note AS name, SUM(cnt) AS count FROM (
+         SELECT note, COUNT(*) AS cnt FROM links WHERE user_id = ? AND note <> '' GROUP BY note
+         UNION ALL
+         SELECT note, COUNT(*) AS cnt FROM snippets WHERE user_id = ? AND note <> '' GROUP BY note
+       ) GROUP BY note ORDER BY count DESC, note ASC LIMIT 200`,
+    )
+      .bind(userId, userId)
+      .all<{ name: string; count: number }>(),
   ]);
 
   const counts = { site: 0, article: 0 };
@@ -209,6 +224,7 @@ linkRoutes.get('/overview', async (c) => {
     months: months.results ?? [],
     textMonths: textMonths.results ?? [],
     imageMonths: imageMonths.results ?? [],
+    notes: noteRows.results ?? [],
   });
 });
 

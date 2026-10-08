@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS snippets (
   bytes        INTEGER NOT NULL DEFAULT 0,
   source_url   TEXT NOT NULL DEFAULT '',  -- 来源页面
   source_title TEXT NOT NULL DEFAULT '',
+  note         TEXT NOT NULL DEFAULT '',  -- 用户备注名称，与链接备注一致，可按备注筛选
   created_at   TEXT NOT NULL DEFAULT (datetime('now'))
 );
 

@@ -131,6 +131,10 @@
           <h2 class="side-head" tabindex="0" aria-expanded="true">图片归档<span class="side-count" id="cnt-image-months"></span><span class="side-arrow">▾</span></h2>
           <div id="image-month-list" class="side-list"></div>
         </section>
+        <section class="side-section" id="sec-notes">
+          <h2 class="side-head" tabindex="0" aria-expanded="true">备注<span class="side-count" id="cnt-notes"></span><span class="side-arrow">▾</span></h2>
+          <div id="note-list" class="side-list"></div>
+        </section>
       </aside>
 
       <main class="content">
@@ -244,6 +248,10 @@
           <label for="add-text-src">来源（可选）</label>
           <input id="add-text-src" type="text" placeholder="https://…（留空则不记录）" />
         </div>
+        <div class="form-row">
+          <label for="add-text-note">备注（可选）</label>
+          <input id="add-text-note" type="text" placeholder="如：待读、设计参考" maxlength="100" />
+        </div>
       </div>
 
       <div class="add-pane hidden" id="add-pane-image">
@@ -259,6 +267,10 @@
             <span id="add-img-name" class="img-name"></span>
             <button id="btn-img-clear" type="button" class="btn-link">重新选择</button>
           </div>
+        </div>
+        <div class="form-row">
+          <label for="add-img-note">备注（可选）</label>
+          <input id="add-img-note" type="text" placeholder="如：待读、设计参考" maxlength="100" />
         </div>
       </div>
 
