@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS links (
   domain     TEXT NOT NULL,
   type       TEXT NOT NULL CHECK (type IN ('site', 'article')),
   category   TEXT NOT NULL,
+  note       TEXT NOT NULL DEFAULT '',  -- 用户备注名称，可空
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   UNIQUE (user_id, url)
 );
