@@ -1,8 +1,13 @@
 // 生产环境认证流程验证：注册 → 密码登录 → 忘记密码重置 → 新密码登录
 // 用 gmail +alias 注册独立测试账号，不影响主账号
+// 用法：node prod-auth-check.cjs <e2e测试邮箱>，或设置 LS_E2E_EMAIL（不把真实邮箱提交进仓库）
 const { execSync } = require('child_process');
 const BASE = 'https://link-saver.junwind.site';
-const EMAIL = 'redacted-e2e@example.com';
+const EMAIL = process.env.LS_E2E_EMAIL || process.argv[2];
+if (!EMAIL) {
+  console.error('用法：node prod-auth-check.cjs <e2e测试邮箱>，或先设置 LS_E2E_EMAIL');
+  process.exit(1);
+}
 const NS = 'c9a2e5f1d5b1423c91f8a3a05e24e84e';
 const PW1 = 'E2eTest' + Math.floor(Math.random() * 900000 + 100000);
 const PW2 = 'E2eReset' + Math.floor(Math.random() * 900000 + 100000);

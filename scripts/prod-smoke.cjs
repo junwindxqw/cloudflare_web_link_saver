@@ -1,7 +1,12 @@
 // 线上冒烟测试：登录 → 保存 → 列表 → SSO，全链路验证生产环境
+// 用法：node prod-smoke.cjs <验证码>，登录邮箱从 LS_MAIN_EMAIL 读取（避免把真实邮箱提交进仓库）
 const BASE = 'https://link-saver.junwind.site';
-const EMAIL = 'redacted@example.com';
 const CODE = process.argv[2];
+const EMAIL = process.env.LS_MAIN_EMAIL;
+if (!CODE || !EMAIL) {
+  console.error('用法：LS_MAIN_EMAIL=<登录邮箱> node prod-smoke.cjs <验证码>');
+  process.exit(1);
+}
 
 async function req(method, path, { body, token } = {}) {
   const headers = {};
