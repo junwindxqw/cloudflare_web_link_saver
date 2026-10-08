@@ -17,6 +17,7 @@ const state = {
   month: '',
   snipMonth: '', // 纯文本 / 图片视图的月份归档筛选
   note: '',      // 备注筛选：跨链接与片段的混合视图
+  tag: '',       // 属性标签筛选：仅链接（纯文本 / 图片无标签）
   days: 0,       // 日期快速筛选（近 N 天，0 = 全部时间）
   q: '',
   offset: 0,
@@ -342,13 +343,15 @@ async function loadList(reset = false) {
   }
   state.loading = true;
   try {
-    if (state.note && !state.type) {
-      // 备注筛选的混合视图：链接 + 片段两个来源并行分页，按时间归并
+    if (!state.type && (state.note || state.tag)) {
+      // 备注 / 标签的混合视图：备注跨链接与片段两个来源，标签仅链接（片段无标签）
       const lOffset = reset ? 0 : state.linkOffset;
       const sOffset = reset ? 0 : state.snipOffset;
       const [lData, sData] = await Promise.all([
         api(`/links?${listQs({ type: 'all', limit: PAGE_SIZE, offset: lOffset })}`),
-        api(`/snippets?${listQs({ limit: PAGE_SIZE, offset: sOffset })}`),
+        state.tag
+          ? Promise.resolve({ items: [], total: 0 })
+          : api(`/snippets?${listQs({ limit: PAGE_SIZE, offset: sOffset })}`),
       ]);
       state.linkOffset = lOffset + lData.items.length;
       state.snipOffset = sOffset + sData.items.length;
@@ -378,12 +381,13 @@ async function loadList(reset = false) {
   }
 }
 
-// 列表接口公共筛选参数（搜索 / 日期 / 片段月份 / 备注）；分类与文章月份仅链接支持
+// 列表接口公共筛选参数（搜索 / 日期 / 片段月份 / 备注 / 标签）；分类与文章月份仅链接支持
 function listQs(base) {
   const params = new URLSearchParams(base);
   if (state.q) params.set('q', state.q);
   if (state.days) params.set('days', String(state.days));
   if (state.note) params.set('note', state.note);
+  if (state.tag) params.set('tag', state.tag);
   if (isSnippetType(state.type)) {
     if (state.snipMonth) params.set('month', state.snipMonth);
   } else {
@@ -425,14 +429,17 @@ function itemHtml(it) {
   const domain = it.type === 'article'
     ? `<span class="item-domain" data-domain="${esc(it.domain)}" title="查看该网站分类">${esc(it.domain)}</span>`
     : esc(it.domain);
+  const tag = it.tag
+    ? `<button class="tag-chip" data-edit="tag" data-tag="${esc(it.tag)}" title="点击修改标签">${esc(it.tag)}</button>`
+    : `<button class="tag-chip add" data-edit="tag" data-tag="" title="添加标签">＋ 标签</button>`;
   const note = it.note
-    ? `<button class="item-note" data-note-edit data-note="${esc(it.note)}" title="点击编辑备注">🏷 ${esc(it.note)}</button>`
-    : `<button class="item-note add" data-note-edit data-note="" title="添加备注">＋ 备注</button>`;
-  return `<div class="item" data-id="${it.id}">
+    ? `<button class="item-note" data-edit="note" data-note="${esc(it.note)}" title="点击编辑备注">🏷 ${esc(it.note)}</button>`
+    : `<button class="item-note add" data-edit="note" data-note="" title="添加备注">＋ 备注</button>`;
+  return `<div class="item" data-id="${it.id}" data-kind="link">
     ${faviconHtml(it.domain)}
     <div class="item-main">
       <div class="item-title"><a href="${esc(it.url)}" target="_blank" rel="noopener noreferrer">${esc(it.title || it.url)}</a></div>
-      <div class="item-meta">${badge}${note}<span>${domain}</span><span>${fmtDate(it.created_at)}</span></div>
+      <div class="item-meta">${badge}${tag}${note}<span>${domain}</span><span>${fmtDate(it.created_at)}</span></div>
     </div>
     <button class="item-del" title="删除" aria-label="删除">✕</button>
   </div>`;
@@ -450,8 +457,8 @@ function snippetHtml(it) {
     body = `<div class="snip-text">${esc(it.content)}</div>`;
   }
   const note = it.note
-    ? `<button class="item-note" data-note-edit data-note="${esc(it.note)}" title="点击编辑备注">🏷 ${esc(it.note)}</button>`
-    : `<button class="item-note add" data-note-edit data-note="" title="添加备注">＋ 备注</button>`;
+    ? `<button class="item-note" data-edit="note" data-note="${esc(it.note)}" title="点击编辑备注">🏷 ${esc(it.note)}</button>`
+    : `<button class="item-note add" data-edit="note" data-note="" title="添加备注">＋ 备注</button>`;
   const source = it.source_url
     ? `<a href="${esc(it.source_url)}" target="_blank" rel="noopener noreferrer" title="${esc(it.source_title || it.source_url)}">${esc(it.source_title || it.source_url)}</a>`
     : '';
@@ -464,12 +471,15 @@ function snippetHtml(it) {
   </div>`;
 }
 
-// 网站视图：图标 + 域名的紧凑磁贴，点击新窗口打开；有备注时右下角显示 🏷（点击可编辑）
+// 网站视图：图标 + 域名的紧凑磁贴，点击新窗口打开；有备注/标签时悬停展示
 function siteTileHtml(it) {
-  const note = it.note
-    ? `<span class="site-tile-note" data-note-edit data-note="${esc(it.note)}" title="${esc(it.note)}（点击编辑）">🏷</span>`
-    : '';
-  const tip = `${it.title || it.url}${it.note ? `｜备注：${it.note}` : ''}`;
+  const note = it.tag
+    ? `<span class="site-tile-note" data-edit="tag" data-tag="${esc(it.tag)}" title="${esc(it.tag)}（点击修改标签）">${esc(it.tag)}</span>`
+    : it.note
+      ? `<span class="site-tile-note" data-edit="note" data-note="${esc(it.note)}" title="${esc(it.note)}（点击编辑）">🏷</span>`
+      : '';
+  const tip = [it.title || it.url, it.tag ? `标签：${it.tag}` : '', it.note ? `备注：${it.note}` : '']
+    .filter(Boolean).join('｜');
   return `<div class="site-tile" data-id="${it.id}" data-kind="link" title="${esc(tip)}">
     <a class="site-tile-link" href="${esc(it.url)}" target="_blank" rel="noopener noreferrer">
       ${faviconHtml(it.domain)}
@@ -486,7 +496,7 @@ function imageCardHtml(it) {
     ? `<img class="snip-thumb" data-snip-id="${it.id}" alt="收藏图片" loading="lazy" />`
     : `<img class="snip-thumb" src="${esc(it.content)}" referrerpolicy="no-referrer" alt="收藏图片" loading="lazy" onerror="this.closest('.img-card').classList.add('broken')" />`;
   const note = it.note
-    ? `<span class="img-card-note" data-note-edit data-note="${esc(it.note)}" title="${esc(it.note)}（点击编辑）">🏷 ${esc(it.note)}</span>`
+    ? `<span class="img-card-note" data-edit="note" data-note="${esc(it.note)}" title="${esc(it.note)}（点击编辑）">🏷 ${esc(it.note)}</span>`
     : '';
   const source = it.source_url
     ? `<a href="${esc(it.source_url)}" target="_blank" rel="noopener noreferrer" title="${esc(it.source_title || it.source_url)}">${esc(it.source_title || it.source_url)}</a>`
@@ -574,6 +584,8 @@ function renderList(items, reset) {
       empty.textContent = '还没有收藏：安装扩展后右键「Send to Link Saver」，或点右上角「＋ 添加」手动保存';
     } else if (state.note) {
       empty.textContent = `备注「${state.note}」下还没有内容`;
+    } else if (state.tag) {
+      empty.textContent = `标签「${state.tag}」下还没有内容`;
     } else if (filtered) {
       empty.textContent = '没有符合条件的收藏';
     } else if (isSnippetType(state.type)) {
@@ -609,6 +621,7 @@ function applyFoldStates() {
     'sec-text-months': state.snipMonth && state.type === 'text',
     'sec-image-months': state.snipMonth && state.type === 'image',
     'sec-notes': !!state.note,
+    'sec-tags': !!state.tag,
   };
   Object.keys(forced).forEach((id) => {
     const sec = $(id);
@@ -652,6 +665,8 @@ function renderSidebar() {
   const textMonths = state.overview?.textMonths ?? [];
   const imageMonths = state.overview?.imageMonths ?? [];
   const notes = state.overview?.notes ?? [];
+  const tags = state.overview?.tags ?? [];
+  const untagged = state.overview?.untagged ?? 0;
 
   // 侧栏板块常驻（与文章归档一致），点击月份归档会切换到对应视图
   $('sec-site-cats').classList.remove('hidden');
@@ -659,6 +674,7 @@ function renderSidebar() {
   $('sec-text-months').classList.remove('hidden');
   $('sec-image-months').classList.remove('hidden');
   $('sec-notes').classList.remove('hidden');
+  $('sec-tags').classList.remove('hidden');
 
   $('site-cats').innerHTML = cats.length
     ? cats.map((c) => `<button class="side-item${state.category === c.name ? ' active' : ''}" data-cat="${esc(c.name)}">
@@ -679,12 +695,23 @@ function renderSidebar() {
         <span class="side-name">🏷 ${esc(n.name)}</span><span class="side-count">${n.count}</span></button>`).join('')
     : '<div class="side-empty">暂无备注</div>';
 
+  // 属性标签列表：与备注同样的筛选方式；按钮一键识别未打标签的链接
+  $('tag-list').innerHTML = tags.length
+    ? tags.map((t) => `<button class="side-item${state.tag === t.name ? ' active' : ''}" data-tag="${esc(t.name)}">
+        <span class="side-name">${esc(t.name)}</span><span class="side-count">${t.count}</span></button>`).join('')
+    : '<div class="side-empty">暂无标签</div>';
+  $('btn-auto-tag').textContent = untagged ? `⌖ 一键识别 · ${untagged}` : '⌖ 一键识别';
+  $('btn-auto-tag').title = untagged
+    ? `按域名和标题关键词识别 ${untagged} 条未打标签的网站 / 文章`
+    : '所有网站 / 文章都已识别（手动改过的标签不会被覆盖）';
+
   // 折叠时标题上的板块计数仍可见，便于判断各收藏量
   $('cnt-site-cats').textContent = cats.length || '';
   $('cnt-article-months').textContent = months.length || '';
   $('cnt-text-months').textContent = textMonths.length || '';
   $('cnt-image-months').textContent = imageMonths.length || '';
   $('cnt-notes').textContent = notes.length || '';
+  $('cnt-tags').textContent = tags.length || '';
 
   applyFoldStates();
 }
@@ -714,6 +741,7 @@ function renderActiveFilters() {
   if (state.month) tags.push({ key: 'month', label: `归档：${monthLabel(state.month)}` });
   if (state.snipMonth) tags.push({ key: 'snipMonth', label: `归档：${monthLabel(state.snipMonth)}` });
   if (state.note) tags.push({ key: 'note', label: `备注：${state.note}` });
+  if (state.tag) tags.push({ key: 'tag', label: `标签：${state.tag}` });
   if (state.days) tags.push({ key: 'days', label: `时间：${DAYS_LABEL[state.days] || `近 ${state.days} 天`}` });
   if (state.q) tags.push({ key: 'q', label: `搜索：${state.q}` });
   box.innerHTML = tags
@@ -766,7 +794,7 @@ function bindEvents() {
     $('search-input').value = '';
     $('date-select').value = '0';
     window.scrollTo({ top: 0 });
-    applyFilter({ type: 'site', category: '', month: '', snipMonth: '', note: '', days: 0, q: '' });
+    applyFilter({ type: 'site', category: '', month: '', snipMonth: '', note: '', tag: '', days: 0, q: '' });
     showToast('已重置为网站列表');
   };
   const logo = $('logo-home');
@@ -796,11 +824,40 @@ function bindEvents() {
     if (noteItem) {
       // 点击备注：进入跨类型的混合视图，再点一次取消；备注下也可用类型 chip 继续筛选
       const n = noteItem.dataset.note;
-      return applyFilter({ type: '', category: '', month: '', snipMonth: '', note: state.note === n ? '' : n });
+      return applyFilter({ type: '', category: '', month: '', snipMonth: '', tag: '', note: state.note === n ? '' : n });
+    }
+    const tagItem = e.target.closest('[data-tag]');
+    if (tagItem) {
+      // 点击标签：进入仅链接的筛选视图（纯文本 / 图片没有标签），与备注互斥
+      const t = tagItem.dataset.tag;
+      return applyFilter({ type: '', category: '', month: '', snipMonth: '', note: '', tag: state.tag === t ? '' : t });
     }
   });
 
   bindSidebarFold();
+
+  // 「一键识别」：对未打标签的网站 / 文章跑规则分类，手动改过的标签不覆盖
+  $('btn-auto-tag').addEventListener('click', async () => {
+    const btn = $('btn-auto-tag');
+    btn.disabled = true;
+    btn.textContent = '识别中…';
+    try {
+      const data = await api('/links/auto-tag', { method: 'POST', body: {} });
+      const parts = Object.entries(data.byTag || {}).map(([t, n]) => `${t} ${n}`);
+      showToast(data.tagged
+        ? `已识别 ${data.tagged} 条${parts.length ? `：${parts.join('、')}` : ''}${data.skipped ? `；${data.skipped} 条未匹配到规则` : ''}`
+        : '没有需要识别的收藏');
+      await Promise.all([refreshOverview(), loadList(true)]);
+    } catch (e) {
+      if (e.status === 401) return logout();
+      showToast(e.message);
+    } finally {
+      btn.disabled = false;
+      // 与 renderSidebar 保持一致：有未识别条目时显示数量
+      const untagged = state.overview?.untagged ?? 0;
+      btn.textContent = untagged ? `⌖ 一键识别 · ${untagged}` : '⌖ 一键识别';
+    }
+  });
 
   $('active-filters').addEventListener('click', (e) => {
     const btn = e.target.closest('[data-clear]');
@@ -852,10 +909,10 @@ function bindEvents() {
       snipText.classList.toggle('expanded');
       return;
     }
-    const noteChip = e.target.closest('[data-note-edit]');
-    if (noteChip) {
-      e.preventDefault(); // 磁贴的备注标记包在链接里，阻止跳转
-      startNoteEdit(noteChip);
+    const editChip = e.target.closest('[data-edit]');
+    if (editChip) {
+      e.preventDefault(); // 磁贴内的标记包在链接结构里，阻止跳转
+      startInlineEdit(editChip);
       return;
     }
     const thumb = e.target.closest('.snip-thumb');
@@ -1085,21 +1142,22 @@ async function afterManualSave(message, switchType) {
 
 /* ---------------- 备注编辑 ---------------- */
 
-// 点击备注标签 → 就地变为输入框：Enter 保存、Esc 取消、失焦取消
-function startNoteEdit(chip) {
-  // 卡片 / 磁贴 / 瀑布流三种结构都带 data-id，片段类走 snippets 接口
+// 点击备注 / 标签 chip → 就地变为输入框：Enter 保存、Esc 取消、失焦取消
+function startInlineEdit(chip) {
+  // 卡片 / 磁贴 / 瀑布流三种结构都带 data-id；标签仅链接有，备注片段走 snippets 接口
   const itemEl = chip.closest('[data-id]');
   if (!itemEl) return;
   const id = itemEl.dataset.id;
-  const kind = itemEl.dataset.kind === 'snippet' ? 'snippets' : 'links';
-  const current = chip.dataset.note || '';
+  const field = chip.dataset.edit === 'tag' ? 'tag' : 'note';
+  const kind = field === 'tag' || itemEl.dataset.kind !== 'snippet' ? 'links' : 'snippets';
+  const current = chip.dataset[field] || '';
 
   const input = document.createElement('input');
   input.type = 'text';
   input.className = 'note-input';
   input.value = current;
-  input.maxLength = 100;
-  input.placeholder = '备注名称（留空清除）';
+  input.maxLength = field === 'tag' ? 30 : 100;
+  input.placeholder = field === 'tag' ? '标签名称（留空清除）' : '备注名称（留空清除）';
   chip.replaceWith(input);
   input.focus();
   input.select();
@@ -1111,19 +1169,22 @@ function startNoteEdit(chip) {
     const val = input.value.trim();
     input.replaceWith(chip);
     if (!save || val === current) return;
-    api(`/${kind}/${id}`, { method: 'PATCH', body: { note: val } })
+    api(`/${kind}/${id}`, { method: 'PATCH', body: { [field]: val } })
       .then((data) => {
-        // 瀑布流卡片清空备注后直接摘掉标签，避免留下「＋ 备注」
-        if (!data.note && chip.classList.contains('img-card-note')) {
+        const v = data[field] ?? '';
+        // 瀑布流 / 磁贴上的标记清空后直接摘掉，避免留下「＋ 备注」占位
+        if (!v && chip.classList.contains('img-card-note')) {
+          chip.remove();
+        } else if (!v && chip.classList.contains('site-tile-note')) {
           chip.remove();
         } else {
-          chip.dataset.note = data.note;
-          chip.textContent = data.note ? `🏷 ${data.note}` : '＋ 备注';
-          chip.classList.toggle('add', !data.note);
+          chip.dataset[field] = v;
+          chip.textContent = v ? (field === 'note' ? `🏷 ${v}` : v) : (field === 'note' ? '＋ 备注' : '＋ 标签');
+          chip.classList.toggle('add', !v);
         }
-        // 侧栏备注列表与计数来自 overview，编辑后需刷新；备注筛选视图还要重拉列表
+        // 侧栏备注 / 标签列表与计数来自 overview，编辑后需刷新；对应筛选视图还要重拉列表
         refreshOverview();
-        if (state.note) loadList(true);
+        if (state[field]) loadList(true);
       })
       .catch((e) => {
         if (e.status === 401) return logout();

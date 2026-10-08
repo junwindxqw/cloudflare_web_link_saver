@@ -280,7 +280,25 @@ button { font-family: inherit; }
 .side-head .side-count { font-weight: 400; letter-spacing: 0; }
 .side-arrow { margin-left: auto; font-size: 10px; color: var(--faint); transition: transform .15s ease; }
 .side-section.collapsed .side-list { display: none; }
+.side-section.collapsed .side-extra { display: none; }
 .side-section.collapsed .side-arrow { transform: rotate(-90deg); }
+/* 侧栏板块内的操作按钮（如「一键识别」），板块收起时一并隐藏 */
+.side-extra { margin: -2px 0 6px; }
+.side-action {
+  display: block;
+  width: 100%;
+  text-align: left;
+  border: 1px dashed var(--line);
+  background: none;
+  color: var(--primary);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 12.5px;
+  font-family: inherit;
+  cursor: pointer;
+}
+.side-action:hover { background: var(--primary-weak); border-color: var(--primary); }
+.side-action:disabled { opacity: 0.6; cursor: default; }
 
 /* ---------- 工具栏 ---------- */
 /* 第一行：类型切换；第二行：搜索 + 日期筛选 */
@@ -446,6 +464,31 @@ button { font-family: inherit; }
 .item:hover .item-note.add { opacity: 1; }
 .item-note.add:focus-visible { opacity: 1; }
 @media (hover: none) { .item-note.add { opacity: 0.65; } }
+/* 属性标签 chip：规则识别生成，点击可就地修改，样式与备注区分（主题色） */
+.tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11px;
+  font-family: inherit;
+  border-radius: 4px;
+  padding: 1px 6px;
+  background: var(--primary-weak);
+  color: var(--primary);
+  flex-shrink: 0;
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border: none;
+  cursor: pointer;
+}
+.tag-chip:hover { filter: brightness(0.96); }
+/* 无标签时的「＋ 标签」：同样悬停条目才显示 */
+.tag-chip.add { opacity: 0; }
+.item:hover .tag-chip.add { opacity: 1; }
+.tag-chip.add:focus-visible { opacity: 1; }
+@media (hover: none) { .tag-chip.add { opacity: 0.65; } }
 .note-input {
   font-family: inherit;
   font-size: 12px;
@@ -482,6 +525,7 @@ button { font-family: inherit; }
 .list[data-view="article"] .item-meta { margin-top: 0; font-size: 12px; gap: 6px; flex-wrap: nowrap; flex-shrink: 0; }
 .list[data-view="article"] .item-meta > span { white-space: nowrap; }
 .list[data-view="article"] .item-note { max-width: 120px; }
+.list[data-view="article"] .tag-chip { max-width: 100px; }
 .list[data-view="article"] .item-del { font-size: 14px; }
 .list[data-view="article"] .group-header { margin: 8px 0 0; }
 
@@ -553,8 +597,20 @@ button { font-family: inherit; }
 .site-tile-link:hover { background: var(--primary-weak); text-decoration: none; }
 .site-tile .fav { width: 40px; height: 40px; border-radius: 10px; font-size: 17px; }
 .site-tile-name { font-size: 12px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-/* 备注标记独立于链接，避免就地编辑输入框嵌在 <a> 里 */
-.site-tile-note { position: absolute; right: 6px; bottom: 6px; font-size: 11px; line-height: 1; cursor: pointer; }
+/* 磁贴上的标签 / 备注标记（点击可就地编辑），独立于链接避免嵌在 <a> 里 */
+.site-tile-note {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  max-width: calc(100% - 12px);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--primary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .site-tile-del { position: absolute; top: 3px; right: 3px; opacity: 0; background: var(--card); box-shadow: var(--shadow-card); }
 .site-tile:hover .site-tile-del, .site-tile-del:focus-visible { opacity: 1; }
 @media (hover: none) { .site-tile-del { opacity: 0.7; } }

@@ -3,6 +3,7 @@ import type { Env } from './types';
 import { ARTICLE_CATEGORY } from './types';
 import { requireAuth } from './middleware';
 import { assertPublicHttpUrl, classifyUrl, fallbackTitle, fetchPageTitle } from './url';
+import { autoTag } from './classify';
 
 export const linkRoutes = new Hono<{ Bindings: Env; Variables: { userId: number; email: string } }>();
 linkRoutes.use('*', requireAuth);
@@ -28,6 +29,9 @@ linkRoutes.post('/', async (c) => {
   const providedTitle = typeof body.title === 'string' ? body.title.replace(/\s+/g, ' ').trim().slice(0, 300) : '';
   // 备注：用户自行标识（如「待读」「参考」），不传时保留已备注
   const providedNote = typeof body.note === 'string' ? body.note.replace(/\s+/g, ' ').trim().slice(0, 200) : '';
+  // 属性标签：规则分类（域名 + 标题关键词），手动指定优先；扩展保存不传则自动识别
+  const tag = (typeof body.tag === 'string' ? body.tag.replace(/\s+/g, ' ').trim().slice(0, 30) : '')
+    || autoTag(u.hostname, providedTitle, cls.canonical);
 
   const existing = await c.env.DB.prepare('SELECT id, title FROM links WHERE user_id = ? AND url = ?')
     .bind(userId, cls.canonical)
@@ -46,14 +50,15 @@ linkRoutes.post('/', async (c) => {
   }
 
   const upsert = c.env.DB.prepare(
-    `INSERT INTO links (user_id, url, title, domain, type, category, note) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO links (user_id, url, title, domain, type, category, note, tag) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(user_id, url) DO UPDATE SET
        title = CASE WHEN excluded.title <> '' THEN excluded.title ELSE title END,
        note = CASE WHEN excluded.note <> '' THEN excluded.note ELSE note END,
        type = excluded.type,
        category = excluded.category,
+       tag = CASE WHEN tag = '' THEN excluded.tag ELSE tag END,
        created_at = datetime('now')`,
-  ).bind(userId, cls.canonical, title, cls.domain, type, category, providedNote);
+  ).bind(userId, cls.canonical, title, cls.domain, type, category, providedNote, tag);
 
   if (type === 'article') {
     // 文章页同时归档所属站点域名：若该域名尚未保存为网站则自动补一条
@@ -89,8 +94,41 @@ linkRoutes.post('/', async (c) => {
     category,
     domain: cls.domain,
     title: title || existing?.title || '',
+    tag,
     existed: Boolean(existing),
   });
+});
+
+// 「一键识别」：对尚未打标签的链接跑规则分类，手动改过的标签不被覆盖
+linkRoutes.post('/auto-tag', async (c) => {
+  const userId = c.get('userId');
+  const force = Boolean((await c.req.json().catch(() => ({})) as { force?: boolean }).force);
+  const rows = await c.env.DB.prepare(
+    `SELECT id, url, domain, title, tag FROM links WHERE user_id = ?${force ? '' : " AND tag = ''"}`,
+  )
+    .bind(userId)
+    .all<{ id: number; url: string; domain: string; title: string; tag: string }>();
+
+  const byTag: Record<string, number> = {};
+  let skipped = 0;
+  const stmts = [];
+  for (const row of rows.results ?? []) {
+    const tag = autoTag(row.domain, row.title, row.url);
+    if (!tag) {
+      skipped += 1;
+      continue;
+    }
+    byTag[tag] = (byTag[tag] ?? 0) + 1;
+    stmts.push(
+      c.env.DB.prepare('UPDATE links SET tag = ? WHERE id = ? AND user_id = ?').bind(tag, row.id, userId),
+    );
+  }
+  // D1 batch 分批提交，避免语句过多超限
+  for (let i = 0; i < stmts.length; i += 50) {
+    await c.env.DB.batch(stmts.slice(i, i + 50));
+  }
+
+  return c.json({ ok: true, tagged: stmts.length, skipped, byTag });
 });
 
 linkRoutes.get('/', async (c) => {
@@ -101,6 +139,7 @@ linkRoutes.get('/', async (c) => {
   const days = Math.min(Math.max(Number(c.req.query('days')) || 0, 0), 3650);
   const q = c.req.query('q')?.trim() || '';
   const note = c.req.query('note')?.trim() || '';
+  const tag = c.req.query('tag')?.trim() || '';
   const limit = Math.min(Math.max(Number(c.req.query('limit')) || 50, 1), 100);
   const offset = Math.max(Number(c.req.query('offset')) || 0, 0);
 
@@ -113,6 +152,10 @@ linkRoutes.get('/', async (c) => {
   if (note) {
     where.push('note = ?');
     binds.push(note);
+  }
+  if (tag) {
+    where.push('tag = ?');
+    binds.push(tag);
   }
   if (category) {
     where.push('category = ?');
@@ -139,7 +182,7 @@ linkRoutes.get('/', async (c) => {
       .bind(...binds)
       .first<{ total: number }>(),
     c.env.DB.prepare(
-      `SELECT id, url, title, domain, type, category, note, created_at
+      `SELECT id, url, title, domain, type, category, note, tag, created_at
        FROM links WHERE ${whereSql}
        ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?`,
     )
@@ -152,6 +195,7 @@ linkRoutes.get('/', async (c) => {
         type: 'site' | 'article';
         category: string;
         note: string;
+        tag: string;
         created_at: string;
       }>(),
   ]);
@@ -167,7 +211,7 @@ linkRoutes.get('/', async (c) => {
 
 linkRoutes.get('/overview', async (c) => {
   const userId = c.get('userId');
-  const [typeCounts, categories, months, snippetCounts, textMonths, imageMonths, noteRows] = await Promise.all([
+  const [typeCounts, categories, months, snippetCounts, textMonths, imageMonths, noteRows, tagRows, untaggedRow] = await Promise.all([
     c.env.DB.prepare(`SELECT type, COUNT(*) AS count FROM links WHERE user_id = ? GROUP BY type`).bind(userId).all<{
       type: 'site' | 'article';
       count: number;
@@ -210,6 +254,17 @@ linkRoutes.get('/overview', async (c) => {
     )
       .bind(userId, userId)
       .all<{ name: string; count: number }>(),
+    // 属性标签去重列表：按数量排序
+    c.env.DB.prepare(
+      `SELECT tag AS name, COUNT(*) AS count FROM links WHERE user_id = ? AND tag <> ''
+       GROUP BY tag ORDER BY count DESC, name ASC LIMIT 200`,
+    )
+      .bind(userId)
+      .all<{ name: string; count: number }>(),
+    // 尚未识别的链接数（侧栏「一键识别」按钮上用）
+    c.env.DB.prepare(`SELECT COUNT(*) AS count FROM links WHERE user_id = ? AND tag = ''`)
+      .bind(userId)
+      .first<{ count: number }>(),
   ]);
 
   const counts = { site: 0, article: 0 };
@@ -225,21 +280,36 @@ linkRoutes.get('/overview', async (c) => {
     textMonths: textMonths.results ?? [],
     imageMonths: imageMonths.results ?? [],
     notes: noteRows.results ?? [],
+    tags: tagRows.results ?? [],
+    untagged: untaggedRow?.count ?? 0,
   });
 });
 
-// 网页端编辑备注（留空即清除）
+// 网页端编辑备注 / 属性标签（留空即清除），两者至少传一个
 linkRoutes.patch('/:id', async (c) => {
   const id = Number(c.req.param('id'));
   if (!Number.isInteger(id) || id <= 0) return c.json({ error: '参数不正确' }, 400);
   const body = await c.req.json().catch(() => ({}));
-  if (typeof body.note !== 'string') return c.json({ error: '缺少 note 参数' }, 400);
-  const note = body.note.replace(/\s+/g, ' ').trim().slice(0, 200);
-  const result = await c.env.DB.prepare('UPDATE links SET note = ? WHERE id = ? AND user_id = ?')
-    .bind(note, id, c.get('userId'))
+  const hasNote = typeof body.note === 'string';
+  const hasTag = typeof body.tag === 'string';
+  if (!hasNote && !hasTag) return c.json({ error: '缺少 note 或 tag 参数' }, 400);
+  const noteVal = hasNote ? body.note.replace(/\s+/g, ' ').trim().slice(0, 200) : '';
+  const tagVal = hasTag ? body.tag.replace(/\s+/g, ' ').trim().slice(0, 30) : '';
+  const fields: string[] = [];
+  const binds: unknown[] = [];
+  if (hasNote) {
+    fields.push('note = ?');
+    binds.push(noteVal);
+  }
+  if (hasTag) {
+    fields.push('tag = ?');
+    binds.push(tagVal);
+  }
+  const result = await c.env.DB.prepare(`UPDATE links SET ${fields.join(', ')} WHERE id = ? AND user_id = ?`)
+    .bind(...binds, id, c.get('userId'))
     .run();
   if (!result.meta.changes) return c.json({ error: '记录不存在' }, 404);
-  return c.json({ ok: true, note });
+  return c.json({ ok: true, note: hasNote ? noteVal : undefined, tag: hasTag ? tagVal : undefined });
 });
 
 linkRoutes.delete('/:id', async (c) => {
