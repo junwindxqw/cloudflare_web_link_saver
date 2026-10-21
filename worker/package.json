@@ -11,7 +11,7 @@
     "db:init:remote": "wrangler d1 execute link-saver-db --remote --file=schema.sql"
   },
   "dependencies": {
-    "hono": "^4.6.0"
+    "hono": "^4.13.11"
   },
   "devDependencies": {
     "@cloudflare/workers-types": "^5.20260903.1",
