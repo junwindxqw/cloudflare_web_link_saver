@@ -7,6 +7,8 @@
   <meta name="description" content="Link Saver —— 你的网页收藏服务" />
   <link rel="icon" type="image/png" href="/logo.png" />
   <link rel="stylesheet" href="/app.css" />
+  <!-- 在渲染前应用主题，避免深色用户白屏闪烁（外链脚本以兼容 CSP） -->
+  <script src="/theme.js"></script>
 </head>
 <body>
   <!-- 登录视图 -->
@@ -155,7 +157,7 @@
         </div>
         <div class="filters-row">
           <div class="search">
-            <input id="search-input" type="search" placeholder="搜索标题、网址、备注或内容…" />
+            <input id="search-input" type="search" placeholder="搜索标题、网址、备注或内容…" aria-label="搜索标题、网址、备注或内容" />
           </div>
           <select id="date-select" class="date-select" aria-label="按日期筛选">
             <option value="0">全部时间</option>
@@ -177,11 +179,11 @@
     </div>
   </div>
 
-  <div id="toast" class="toast hidden"></div>
+  <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
   <div id="img-lightbox" class="img-lightbox hidden"><img alt="图片预览" /></div>
 
   <!-- 修改密码弹窗 -->
-  <div id="pw-modal" class="modal-backdrop hidden">
+  <div id="pw-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="pw-modal-title">
     <div class="modal-card">
       <h3 id="pw-modal-title" class="modal-title">修改密码</h3>
       <div class="form-row" id="pw-old-row">
@@ -205,7 +207,9 @@
   </div>
 
   <!-- 手动添加弹窗：网址 / 纯文本 / 图片 -->
-  <div id="add-modal" class="modal-backdrop hidden">
+  <div id="add-modal" class="modal-backdrop hidden" role="dialog" aria-modal="true" aria-labelledby="add-modal-title">
+    <div class="modal-card modal-card-add">
+      <h3 class="modal-title" id="add-modal-title">添加收藏</h3>
     <div class="modal-card modal-card-add">
       <h3 class="modal-title">添加收藏</h3>
       <div class="add-tabs" id="add-tabs" role="tablist">

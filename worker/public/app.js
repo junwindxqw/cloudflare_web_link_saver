@@ -24,9 +24,12 @@ const state = {
   total: 0,
   linkOffset: 0,  // 备注混合视图下两个数据源各自的分页游标
   snipOffset: 0,
+  linkTotal: null,  // 混合视图下两源各自的总数，null = 未加载过
+  snipTotal: null,
   overview: null,
   loading: false,
   pendingReset: false,
+  pendingMore: false, // 加载中被点击的「加载更多」，本轮完成后补发
   hasPassword: false,
 };
 
@@ -211,6 +214,15 @@ function logout() {
   location.reload();
 }
 
+// 会话过期（401）：清凭证并回到登录视图，不整页刷新——添加弹窗 / 密码弹窗里的
+// 未提交草稿得以保留，用户重新登录后可继续操作。
+function handle401() {
+  state.token = '';
+  localStorage.removeItem(TOKEN_KEY);
+  showToast('登录已过期，请重新登录');
+  showLogin();
+}
+
 /* ---------------- 扩展联动自动登录 ---------------- */
 
 // 通过 URL 中的一次性令牌登录（扩展菜单跳转 / 兜底流程）
@@ -330,54 +342,74 @@ async function refreshOverview() {
     renderSidebar();
     renderTypeChips();
   } catch (e) {
-    if (e.status === 401) return logout();
+    if (e.status === 401) return handle401();
     console.error(e);
   }
 }
 
+function setMoreBusy(busy) {
+  const btn = $('btn-more');
+  btn.disabled = busy;
+  btn.textContent = busy ? '加载中…' : '加载更多';
+}
+
 async function loadList(reset = false) {
-  // 防竞态：上一个加载未完成时新的加载请求会被丢弃，这里记录并在完成后按最新状态重载
+  // 防竞态：加载未完成时到达的重置 / 追加请求记入待办，本轮完成后按最新意图重放
   if (state.loading) {
-    state.pendingReset = state.pendingReset || reset;
+    if (reset) state.pendingReset = true;
+    else state.pendingMore = true;
     return;
   }
   state.loading = true;
+  setMoreBusy(true);
+  // 快照发起时的视图：响应返回期间用户可能已切换类型，渲染仍按发起时的视图
+  const view = state.type;
   try {
-    if (!state.type && (state.note || state.tag)) {
+    if (!view && (state.note || state.tag)) {
       // 备注 / 标签的混合视图：备注跨链接与片段两个来源，标签仅链接（片段无标签）
       const lOffset = reset ? 0 : state.linkOffset;
       const sOffset = reset ? 0 : state.snipOffset;
+      // 已耗尽的数据源不再重复请求（每个"加载更多"都省一次无效往返）
+      const needLinks = reset || state.linkTotal == null || lOffset < state.linkTotal;
+      const needSnips = !state.tag && (reset || state.snipTotal == null || sOffset < state.snipTotal);
       const [lData, sData] = await Promise.all([
-        api(`/links?${listQs({ type: 'all', limit: PAGE_SIZE, offset: lOffset })}`),
-        state.tag
-          ? Promise.resolve({ items: [], total: 0 })
-          : api(`/snippets?${listQs({ limit: PAGE_SIZE, offset: sOffset })}`),
+        needLinks
+          ? api(`/links?${listQs({ type: 'all', limit: PAGE_SIZE, offset: lOffset })}`)
+          : Promise.resolve({ items: [], total: state.linkTotal }),
+        needSnips
+          ? api(`/snippets?${listQs({ limit: PAGE_SIZE, offset: sOffset })}`)
+          : Promise.resolve({ items: [], total: state.snipTotal }),
       ]);
+      state.linkTotal = lData.total;
+      state.snipTotal = sData.total;
       state.linkOffset = lOffset + lData.items.length;
       state.snipOffset = sOffset + sData.items.length;
       state.total = lData.total + sData.total;
       state.offset = state.linkOffset + state.snipOffset;
       const merged = [...lData.items, ...sData.items].sort((a, b) =>
         (b.created_at || '').localeCompare(a.created_at || '') || (b.id - a.id));
-      renderList(merged, reset);
+      renderList(merged, reset, view);
     } else {
       const offset = reset ? 0 : state.offset;
-      const data = isSnippetType(state.type)
-        ? await api(`/snippets?${listQs({ type: state.type, limit: PAGE_SIZE, offset })}`)
-        : await api(`/links?${listQs({ type: state.type, limit: PAGE_SIZE, offset })}`);
+      const data = isSnippetType(view)
+        ? await api(`/snippets?${listQs({ type: view, limit: PAGE_SIZE, offset })}`)
+        : await api(`/links?${listQs({ type: view, limit: PAGE_SIZE, offset })}`);
       state.total = data.total;
       state.offset = offset + data.items.length;
-      renderList(data.items, reset);
+      renderList(data.items, reset, view);
     }
   } catch (e) {
-    if (e.status === 401) return logout();
+    if (e.status === 401) return handle401();
     showToast(e.message);
   } finally {
     state.loading = false;
-    if (state.pendingReset) {
-      state.pendingReset = false;
-      void loadList(true);
-    }
+    setMoreBusy(false);
+    const replayReset = state.pendingReset;
+    const replayMore = state.pendingMore;
+    state.pendingReset = false;
+    state.pendingMore = false;
+    // 重置优先（追加在其后无意义）；会话已失效时不再重放
+    if (state.token && (replayReset || replayMore)) void loadList(replayReset);
   }
 }
 
@@ -415,13 +447,15 @@ function fmtDate(s) {
   return `${y}${d.getMonth() + 1} 月 ${d.getDate()} 日`;
 }
 
+// favicon 兜底色：按域名哈希取 24 档色类（CSP 禁止内联 style，色调与旧实现一致）
+const FAV_COLOR_COUNT = 24;
+
 function faviconHtml(domain) {
   let hash = 0;
   for (const ch of domain) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
-  const hue = hash % 360;
   const letter = esc((domain.replace(/^www\./, '')[0] || '?').toUpperCase());
-  const img = `<img src="https://www.google.com/s2/favicons?sz=64&domain=${encodeURIComponent(domain)}" alt="" onerror="this.remove()" loading="lazy" />`;
-  return `<span class="fav" style="background:hsl(${hue},62%,52%)">${letter}${img}</span>`;
+  const img = `<img src="https://www.google.com/s2/favicons?sz=64&domain=${encodeURIComponent(domain)}" alt="" loading="lazy" data-fav />`;
+  return `<span class="fav fav-c${hash % FAV_COLOR_COUNT}">${letter}${img}</span>`;
 }
 
 function itemHtml(it) {
@@ -450,9 +484,10 @@ function snippetHtml(it) {
   let body;
   if (it.type === 'image') {
     // 已转存的图片走带凭证的接口；转存失败的直接用原始外链
+    // 图片加载失败统一由 #list 的 capture 阶段 error 委托处理（CSP 禁止内联 onerror）
     body = it.storage_key
       ? `<div class="snip-img"><img class="snip-thumb" data-snip-id="${it.id}" alt="收藏图片" loading="lazy" /></div>`
-      : `<div class="snip-img"><img class="snip-thumb" src="${esc(it.content)}" referrerpolicy="no-referrer" alt="收藏图片" loading="lazy" onerror="this.closest('.snip-img').classList.add('broken')" /></div>`;
+      : `<div class="snip-img"><img class="snip-thumb" src="${esc(it.content)}" referrerpolicy="no-referrer" alt="收藏图片" loading="lazy" /></div>`;
   } else {
     body = `<div class="snip-text">${esc(it.content)}</div>`;
   }
@@ -494,7 +529,7 @@ function siteTileHtml(it) {
 function imageCardHtml(it) {
   const img = it.storage_key
     ? `<img class="snip-thumb" data-snip-id="${it.id}" alt="收藏图片" loading="lazy" />`
-    : `<img class="snip-thumb" src="${esc(it.content)}" referrerpolicy="no-referrer" alt="收藏图片" loading="lazy" onerror="this.closest('.img-card').classList.add('broken')" />`;
+    : `<img class="snip-thumb" src="${esc(it.content)}" referrerpolicy="no-referrer" alt="收藏图片" loading="lazy" />`;
   const note = it.note
     ? `<span class="img-card-note" data-edit="note" data-note="${esc(it.note)}" title="${esc(it.note)}（点击编辑）">🏷 ${esc(it.note)}</span>`
     : '';
@@ -508,27 +543,37 @@ function imageCardHtml(it) {
   </figure>`;
 }
 
-// 已转存图片需带 Authorization 拉取二进制，这里统一换取 objectURL
+// 已转存图片需带 Authorization 拉取二进制，这里统一换取 objectURL；
+// 缓存命中直接回填，未命中的走 4 路并发拉取（逐张串行会让第 N 张等 N-1 个往返）
 async function hydrateSnippetImages() {
-  for (const img of document.querySelectorAll('#list img.snip-thumb[data-snip-id]')) {
+  const imgs = Array.from(document.querySelectorAll('#list img.snip-thumb[data-snip-id]'));
+  const tasks = [];
+  for (const img of imgs) {
     const id = img.dataset.snipId;
     if (!id) continue;
-    if (snippetImgUrls.has(id)) {
-      img.src = snippetImgUrls.get(id);
-      continue;
-    }
-    try {
-      const res = await fetch(`/api/snippets/${id}/image`, { headers: { Authorization: `Bearer ${state.token}` } });
-      if (res.status === 401) return logout();
-      if (!res.ok) throw new Error('加载失败');
-      const url = URL.createObjectURL(await res.blob());
-      snippetImgUrls.set(id, url);
-      img.src = url;
-    } catch {
-      img.closest('.snip-img, .img-card')?.classList.add('broken');
-      img.remove();
-    }
+    const cached = snippetImgUrls.get(id);
+    if (cached) img.src = cached;
+    else tasks.push([img, id]);
   }
+  const CONCURRENCY = 4;
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < tasks.length) {
+      const [img, id] = tasks[cursor++];
+      try {
+        const res = await fetch(`/api/snippets/${id}/image`, { headers: { Authorization: `Bearer ${state.token}` } });
+        if (res.status === 401) return handle401();
+        if (!res.ok) throw new Error('加载失败');
+        const url = URL.createObjectURL(await res.blob());
+        snippetImgUrls.set(id, url);
+        img.src = url;
+      } catch {
+        img.closest('.snip-img, .img-card')?.classList.add('broken');
+        img.remove();
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, tasks.length) }, () => worker()));
 }
 
 // 网站 / 图片视图用网格容器承载，"加载更多"时追加进同一网格
@@ -543,23 +588,24 @@ function appendGrid(listEl, cls, nodesHtml) {
   grid.insertAdjacentHTML('beforeend', nodesHtml);
 }
 
-function renderList(items, reset) {
+// view 为发起请求时的视图快照：响应返回期间用户切走后，旧响应仍按原视图渲染，不串样式
+function renderList(items, reset, view = state.type) {
   const listEl = $('list');
   // 备注筛选的混合视图没有类型，data-view 用 mixed（默认卡片样式，保留类型角标）
-  listEl.dataset.view = state.type || 'mixed';
+  listEl.dataset.view = view || 'mixed';
   if (reset) listEl.innerHTML = '';
 
-  if (state.type === 'site') {
+  if (view === 'site') {
     // 网站视图：只放图标 + 域名的磁贴网格，一屏看更多
     appendGrid(listEl, 'site-grid', items.map(siteTileHtml).join(''));
-  } else if (state.type === 'image') {
+  } else if (view === 'image') {
     // 图片视图：瀑布流
     appendGrid(listEl, 'image-grid', items.map(imageCardHtml).join(''));
   } else {
     let html = '';
     let lastMonth = null;
     // 文章视图按月份归档展示
-    const groupByMonth = state.type === 'article';
+    const groupByMonth = view === 'article';
     for (const it of items) {
       if (groupByMonth) {
         const m = (it.created_at || '').slice(0, 7);
@@ -588,12 +634,12 @@ function renderList(items, reset) {
       empty.textContent = `标签「${state.tag}」下还没有内容`;
     } else if (filtered) {
       empty.textContent = '没有符合条件的收藏';
-    } else if (isSnippetType(state.type)) {
-      empty.textContent = state.type === 'text'
+    } else if (isSnippetType(view)) {
+      empty.textContent = view === 'text'
         ? '还没有保存的纯文本，在网页里选中文字后右键「Send to Link Saver」'
         : '还没有保存的图片，在网页里右键图片「Send to Link Saver」';
     } else {
-      empty.textContent = state.type === 'article' ? '还没有文章' : '还没有网站';
+      empty.textContent = view === 'article' ? '还没有文章' : '还没有网站';
     }
     empty.classList.remove('hidden');
   } else {
@@ -749,10 +795,17 @@ function renderActiveFilters() {
     .join('');
 }
 
+// 只有这些筛选会影响侧栏内容与高亮；q / days 只改列表，跳过侧栏全量重建
+const SIDEBAR_AFFECTING_KEYS = new Set(['type', 'category', 'month', 'snipMonth', 'note', 'tag']);
+
 async function applyFilter(patch) {
   Object.assign(state, patch);
-  renderSidebar();
-  renderTypeChips();
+  // 搜索 / 日期筛选每次防抖键入都会触发，跳过侧栏重建是高频路径上最大的 DOM 省耗
+  const affectsSidebar = Object.keys(patch).some((k) => SIDEBAR_AFFECTING_KEYS.has(k));
+  if (affectsSidebar) {
+    renderSidebar();
+    renderTypeChips();
+  }
   renderActiveFilters();
   await loadList(true);
 }
@@ -849,7 +902,7 @@ function bindEvents() {
         : '没有需要识别的收藏');
       await Promise.all([refreshOverview(), loadList(true)]);
     } catch (e) {
-      if (e.status === 401) return logout();
+      if (e.status === 401) return handle401();
       showToast(e.message);
     } finally {
       btn.disabled = false;
@@ -963,14 +1016,48 @@ function bindEvents() {
     try {
       const data = await api('/auth/change-password', { method: 'POST', body: { old_password: oldPw, new_password: newPw } });
       closePwModal();
+      // 改密码会吊销所有旧令牌：服务端返回新令牌，立即替换保持当前会话不掉线
+      if (data.token) {
+        state.token = data.token;
+        localStorage.setItem(TOKEN_KEY, data.token);
+      }
       state.hasPassword = true;
       $('btn-passwd').textContent = '修改密码';
       showToast(data.message || '密码已修改');
     } catch (e) {
-      if (e.status === 401) return logout();
+      if (e.status === 401) return handle401();
       setPwMsg(e.message);
     }
   });
+  // 图片加载失败统一处理（capture 阶段：error 事件不冒泡，祖先节点要用捕获才能收到）。
+  // favicon 加载失败摘除留字母底色；未转存的收藏图失败打上「已失效」标记。
+  document.addEventListener('error', (e) => {
+    const img = e.target;
+    if (!(img instanceof HTMLImageElement)) return;
+    if (img.dataset.fav) {
+      img.remove();
+      return;
+    }
+    const holder = img.closest('.snip-img, .img-card');
+    if (holder) {
+      holder.classList.add('broken');
+      img.remove();
+    }
+  }, true);
+
+  // Esc 逐层关闭：添加弹窗 → 密码弹窗 → 灯箱
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape') return;
+    if (!$('add-modal').classList.contains('hidden')) {
+      closeAddModal();
+    } else if (!$('pw-modal').classList.contains('hidden')) {
+      closePwModal();
+    } else if (!$('img-lightbox').classList.contains('hidden')) {
+      $('img-lightbox').querySelector('img').src = '';
+      $('img-lightbox').classList.add('hidden');
+    }
+  });
+
   bindAddEvents();
 }
 
@@ -1097,6 +1184,7 @@ function bindAddEvents() {
 
 async function saveFromAddModal() {
   const btn = $('btn-add-save');
+  if (btn.disabled) return; // Enter 键与点击并发触发时防重复提交（文本 / 图片无服务端去重）
   btn.disabled = true;
   setAddMsg('正在保存…', true);
   try {
@@ -1105,7 +1193,10 @@ async function saveFromAddModal() {
       const type = addState.tab === 'article' ? 'article' : 'site';
       const p = type === 'article' ? 'art' : 'link';
       let url = $(`add-${p}-url`).value.trim();
-      if (url && !/^https?:\/\//i.test(url)) url = `https://${url}`;
+      if (url && !/^https?:\/\//i.test(url)) {
+        if (/^[a-z][a-z0-9+.-]*:/i.test(url)) return setAddMsg('仅支持 http/https 网址');
+        url = `https://${url}`;
+      }
       const title = $(`add-${p}-title`).value.trim();
       const note = $(`add-${p}-note`).value.trim();
       if (!url) return setAddMsg('请输入网址');
@@ -1116,7 +1207,7 @@ async function saveFromAddModal() {
       const sourceUrl = $('add-text-src').value.trim();
       const note = $('add-text-note').value.trim();
       if (!content) return setAddMsg('请输入内容');
-      const data = await api('/snippets', { method: 'POST', body: { type: 'text', content: content.slice(0, 10000), source_url: sourceUrl, note } });
+      await api('/snippets', { method: 'POST', body: { type: 'text', content: content.slice(0, 10000), source_url: sourceUrl, note } });
       await afterManualSave(`已保存纯文本（${Math.min(content.length, 10000)} 字）`, 'text');
     } else {
       if (!addState.image) return setAddMsg('请先粘贴或选择图片');
@@ -1125,7 +1216,7 @@ async function saveFromAddModal() {
       await afterManualSave(data.stored ? '图片已转存到服务端' : '图片已保存', 'image');
     }
   } catch (e) {
-    if (e.status === 401) return logout();
+    if (e.status === 401) return handle401();
     setAddMsg(e.message);
   } finally {
     btn.disabled = false;
@@ -1187,7 +1278,7 @@ function startInlineEdit(chip) {
         if (state[field]) loadList(true);
       })
       .catch((e) => {
-        if (e.status === 401) return logout();
+        if (e.status === 401) return handle401();
         showToast(e.message);
       });
   };

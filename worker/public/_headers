@@ -1,0 +1,11 @@
+# 静态资源安全响应头（Workers Static Assets 的 _headers 约定）
+# CSP 说明：脚本/样式只允许同源文件；图片放行 blob:（带凭证转存图）、data:（添加弹窗预览）
+# 与 https:（Google favicon、未转存的远程图片外链）。
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' blob: data: https:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'
+  X-Frame-Options: DENY
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: strict-origin-when-cross-origin
+  Permissions-Policy: camera=(), microphone=(), geolocation=()
+  Strict-Transport-Security: max-age=31536000; includeSubDomains
+  Cross-Origin-Opener-Policy: same-origin

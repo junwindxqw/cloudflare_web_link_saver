@@ -83,7 +83,6 @@ button { font-family: inherit; }
 }
 
 .brand { text-align: center; margin-bottom: 20px; }
-.brand-icon { font-size: 36px; }
 .brand h1 { font-size: 22px; margin: 8px 0 2px; }
 .brand-sub { color: var(--muted); font-size: 13px; margin: 0; }
 
@@ -399,7 +398,33 @@ button { font-family: inherit; }
   font-weight: 700;
   font-size: 16px;
   overflow: hidden;
+  /* 兜底色由 hue 分档类（.fav-c0…c23）提供，CSP 禁止内联 style */
+  background: hsl(var(--fav-hue, 210), 62%, 52%);
 }
+.fav-c0 { --fav-hue: 0; }
+.fav-c1 { --fav-hue: 15; }
+.fav-c2 { --fav-hue: 30; }
+.fav-c3 { --fav-hue: 45; }
+.fav-c4 { --fav-hue: 60; }
+.fav-c5 { --fav-hue: 75; }
+.fav-c6 { --fav-hue: 90; }
+.fav-c7 { --fav-hue: 105; }
+.fav-c8 { --fav-hue: 120; }
+.fav-c9 { --fav-hue: 135; }
+.fav-c10 { --fav-hue: 150; }
+.fav-c11 { --fav-hue: 165; }
+.fav-c12 { --fav-hue: 180; }
+.fav-c13 { --fav-hue: 195; }
+.fav-c14 { --fav-hue: 210; }
+.fav-c15 { --fav-hue: 225; }
+.fav-c16 { --fav-hue: 240; }
+.fav-c17 { --fav-hue: 255; }
+.fav-c18 { --fav-hue: 270; }
+.fav-c19 { --fav-hue: 285; }
+.fav-c20 { --fav-hue: 300; }
+.fav-c21 { --fav-hue: 315; }
+.fav-c22 { --fav-hue: 330; }
+.fav-c23 { --fav-hue: 345; }
 .fav img {
   position: absolute;
   inset: 0;
@@ -684,8 +709,6 @@ button { font-family: inherit; }
   background: var(--card);
 }
 
-.layout.single-col { grid-template-columns: 1fr; }
-
 .empty {
   text-align: center;
   color: var(--faint);
@@ -704,6 +727,7 @@ button { font-family: inherit; }
   font-size: 14px;
 }
 .btn-more:hover { color: var(--primary); border-color: var(--primary); }
+.btn-more:disabled { opacity: 0.6; cursor: default; }
 
 /* ---------- 修改密码弹窗 ---------- */
 .modal-backdrop {
