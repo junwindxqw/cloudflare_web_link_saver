@@ -44,11 +44,22 @@ function check(name, cond, detail = '') {
   else { failed++; console.log(`FAIL  ${name}  ${detail}`); }
 }
 
-async function req(method, path, { body, token } = {}) {
+async function req(method, path, { body, token } = {}, retry = 1) {
   const headers = {};
   if (body !== undefined) headers['Content-Type'] = 'application/json';
   if (token) headers.Authorization = `Bearer ${token}`;
-  const res = await fetch(BASE + path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
+  let res;
+  try {
+    res = await fetch(BASE + path, { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined });
+  } catch (e) {
+    // 读码轮询等长间隔空闲后，dev server 会复位 keep-alive 连接（ECONNRESET），
+    // 重试一次即可；仍失败则向上抛
+    if (retry > 0) {
+      sleepSync(1000);
+      return req(method, path, { body, token }, retry - 1);
+    }
+    throw e;
+  }
   let data = {};
   try { data = await res.json(); } catch {}
   return { status: res.status, data };
@@ -226,7 +237,8 @@ async function req(method, path, { body, token } = {}) {
   check('注册成功并返回凭证', reg.status === 200 && reg.data.token, JSON.stringify(reg.data));
 
   const dupReg = await req('POST', '/api/auth/register/request-code', { body: { email: regEmail } });
-  check('重复注册邮箱被拒(409)', dupReg.status === 409, JSON.stringify(dupReg.data));
+  // 防枚举：已注册邮箱与未注册返回同样的中性响应（不发信、不报 409）
+  check('重复注册请求防枚举（中性响应）', dupReg.status === 200 && dupReg.data.ok === true, JSON.stringify(dupReg.data));
 
   const weak = await req('POST', '/api/auth/register', { body: { email: regEmail, password: 'short', code: '000000' } });
   check('弱密码被拒', weak.status === 400 && /密码/.test(weak.data.error), JSON.stringify(weak.data));

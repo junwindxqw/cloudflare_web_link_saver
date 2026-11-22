@@ -3,3 +3,5 @@ JWT_SECRET=local-dev-secret-change-me
 RESEND_API_KEY=re_placeholder_for_local
 MAIL_FROM=Link Saver <noreply@junwind.site>
 WEB_ORIGIN=http://localhost:8787
+# 仅本地开发放开 localhost 来源的 CORS（生产不设此变量，默认拒绝）
+ALLOW_LOCAL_ORIGIN=true

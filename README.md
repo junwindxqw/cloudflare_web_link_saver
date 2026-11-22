@@ -51,7 +51,18 @@ npx wrangler deploy
 
 域名托管在 Cloudflare 时会自动完成配置，无需手动加 DNS。浏览器访问你的域名，出现登录页即部署成功。
 
-> 升级已有部署时，执行 `worker/migrations/` 里还没执行过的 SQL（`wrangler d1 execute ... --file=migrations/xxx.sql`）即可；首次部署不用。
+> 升级已有部署时，执行 `worker/migrations/` 里还没执行过的 SQL（`wrangler d1 execute link-saver-db --remote --file=migrations/xxx.sql`）即可；首次部署不用（首次直接跑 `npm run db:init:remote` 即为最新结构）。
+
+### 本地开发
+
+```bash
+cd worker
+cp .dev.vars.example .dev.vars   # 本地密钥与开发开关（其中 ALLOW_LOCAL_ORIGIN=true 放开 localhost CORS）
+npm run db:init:local            # 首次建库；已有库则按序补执行 migrations/ 里未执行的 SQL
+npm run dev                      # http://127.0.0.1:8787
+```
+
+本地跑端到端回归：`node scripts/e2e-local.cjs`（需 `npm run dev` 在运行中）。
 
 ## 二、安装 Chrome 扩展
 
