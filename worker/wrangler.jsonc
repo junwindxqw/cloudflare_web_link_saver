@@ -12,6 +12,8 @@
     // 域名 junwind.site 需托管在同一 Cloudflare 账号下，deploy 时自动创建自定义域
     { "pattern": "link-saver.junwind.site", "custom_domain": true }
   ],
+  // 关闭 *.workers.dev 默认域名：应用与 API 只从自定义域名访问，减少暴露面
+  "workers_dev": false,
   "d1_databases": [
     {
       "binding": "DB",
@@ -34,7 +36,9 @@
   ],
   "vars": {
     "WEB_ORIGIN": "https://link-saver.junwind.site",
-    "MAIL_FROM": "Link Saver <noreply@junwind.site>"
+    "MAIL_FROM": "Link Saver <noreply@junwind.site>",
+    // 扩展的固定来源（ID 由 manifest.json 的 key 固定），CORS 白名单用
+    "EXTENSION_ORIGIN": "chrome-extension://ojokkllejggilcghafadekmldpgcmphd"
   },
   "observability": {
     "enabled": true

@@ -1,7 +1,8 @@
 import { Hono } from 'hono';
 import type { Env } from './types';
 import { requireAuth } from './middleware';
-import { assertPublicHttpUrl } from './url';
+import { assertPublicHttpUrl, fetchPublicUrl } from './url';
+import { monthRange } from './month';
 
 const MAX_TEXT_CHARS = 10_000;
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -23,7 +24,7 @@ snippetRoutes.post('/', async (c) => {
   const content = typeof body?.content === 'string' ? body.content.trim() : '';
   if (!content) return c.json({ error: '内容不能为空' }, 400);
 
-  // 来源信息仅作展示用：只接受公网 http/https 链接，长度截断
+  // 来源信息仅作展示用：只接受公网 http/https 链接；超长或非法来源直接丢弃
   let sourceUrl = typeof body?.source_url === 'string' ? body.source_url.trim() : '';
   if (sourceUrl) {
     try {
@@ -31,6 +32,7 @@ snippetRoutes.post('/', async (c) => {
     } catch {
       sourceUrl = '';
     }
+    if (sourceUrl.length > MAX_SOURCE_LEN) sourceUrl = '';
   }
   const sourceTitle = (typeof body?.source_title === 'string' ? body.source_title : '')
     .replace(/\s+/g, ' ')
@@ -109,8 +111,14 @@ snippetRoutes.get('/', async (c) => {
     binds.push(note);
   }
   if (month) {
-    where.push("strftime('%Y-%m', created_at) = ?");
-    binds.push(month);
+    // 范围条件让 SQLite 走 created_at 索引（strftime 按行计算会全表扫）
+    const range = monthRange(month);
+    if (range) {
+      where.push('created_at >= ? AND created_at < ?');
+      binds.push(range[0], range[1]);
+    } else {
+      where.push('1 = 0');
+    }
   }
   if (days > 0) {
     where.push("created_at >= datetime('now', ?)");
@@ -239,56 +247,27 @@ function parseDataUrlImage(raw: string): { buf: ArrayBuffer; mime: string } | st
 }
 
 /**
- * 抓取远程图片并转存。手动跟随重定向，每一跳都重新校验目标地址（与抓取标题同样的 SSRF 约束），
+ * 抓取远程图片并转存。跟随重定向与逐跳 SSRF 校验由 fetchPublicUrl 统一处理（与抓取标题同口径），
  * 携带来源页 Referer 与浏览器 UA 以通过常见防盗链；内容类型必须是 image/*，体积超限即放弃。
  * 任何一步失败返回 null（调用方回退为保存外链）。
  */
 async function storeRemoteImage(env: Env, rawUrl: string, referer: string): Promise<StoredImage | null> {
-  let current = rawUrl;
-  for (let hop = 0; hop < 3; hop++) {
-    let u: URL;
-    try {
-      u = assertPublicHttpUrl(current);
-    } catch {
-      return null;
-    }
-    const headers: Record<string, string> = { 'user-agent': USER_AGENT, accept: 'image/avif,image/webp,image/*,*/*;q=0.8' };
-    if (referer) headers.referer = referer;
-    let res: Response;
-    try {
-      res = await fetch(u, {
-        redirect: 'manual',
-        signal: AbortSignal.timeout(10000),
-        headers,
-      });
-    } catch {
-      return null;
-    }
-    if (res.status >= 300 && res.status < 400) {
-      const loc = res.headers.get('location');
-      if (!loc) return null;
-      try {
-        current = new URL(loc, u).toString();
-      } catch {
-        return null;
-      }
-      continue;
-    }
-    if (!res.ok) return null;
-    const mime = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
-    // image/* 才转存；SVG 可内嵌脚本，防御性拒绝，回退保存外链
-    if (!mime.startsWith('image/') || mime === 'image/svg+xml') return null;
-    const buf = await readCapped(res, MAX_IMAGE_BYTES);
-    if (!buf) return null;
-    try {
-      return await saveMedia(env, buf, mime);
-    } catch (e) {
-      // 存储写入失败不应让整个保存请求失败：回退为保存外链
-      console.error('snippet media storage failed', e);
-      return null;
-    }
+  const headers: Record<string, string> = { 'user-agent': USER_AGENT, accept: 'image/avif,image/webp,image/*,*/*;q=0.8' };
+  if (referer) headers.referer = referer;
+  const res = await fetchPublicUrl(rawUrl, { headers, timeoutMs: 10000 });
+  if (!res || !res.ok) return null;
+  const mime = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+  // image/* 才转存；SVG 可内嵌脚本，防御性拒绝，回退保存外链
+  if (!mime.startsWith('image/') || mime === 'image/svg+xml') return null;
+  const buf = await readCapped(res, MAX_IMAGE_BYTES);
+  if (!buf) return null;
+  try {
+    return await saveMedia(env, buf, mime);
+  } catch (e) {
+    // 存储写入失败不应让整个保存请求失败：回退为保存外链
+    console.error('snippet media storage failed', e);
+    return null;
   }
-  return null;
 }
 
 /** 流式读取响应体，超过 cap 字节视为失败，避免大文件撑爆内存 */

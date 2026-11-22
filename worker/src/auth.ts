@@ -6,6 +6,7 @@ import { TOKEN_TTL_SECONDS } from './types';
 import { sendCodeEmail, type CodePurpose } from './email';
 import { requireAuth } from './middleware';
 import { hashPassword, validatePassword, verifyPassword } from './password';
+import { bumpLimit, clearLimit, peekLimit } from './limits';
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const CODE_TTL = 600;
@@ -15,7 +16,8 @@ const IP_DAILY_LIMIT = 30;
 const LOGIN_FAIL_LIMIT = 10;
 const LOGIN_FAIL_TTL = 900;
 
-type CodeRecord = { code: string; attempts: number; expiresAt: number };
+// 验证码只存码值与有效期；错误尝试次数在 rate_limits 表（D1 原子自增）里累计
+type CodeRecord = { code: string; expiresAt: number };
 type UserInfo = { id: number; email: string };
 
 function normalizeEmail(raw: unknown): string | null {
@@ -37,7 +39,17 @@ function randomCode(): string {
   return String(n % 1000000).padStart(6, '0');
 }
 
-async function issueToken(env: Env, user: UserInfo): Promise<string> {
+// 常量时间比较验证码（长度先比对：两侧行长度固定 6 位，不泄露额外信息）
+function codeEqual(a: string, b: string): boolean {
+  const ea = new TextEncoder().encode(a);
+  const eb = new TextEncoder().encode(b);
+  if (ea.length !== eb.length) return false;
+  let diff = 0;
+  for (let i = 0; i < ea.length; i++) diff |= ea[i] ^ eb[i];
+  return diff === 0;
+}
+
+export async function issueToken(env: Env, user: UserInfo): Promise<string> {
   const now = Math.floor(Date.now() / 1000);
   const payload: UserPayload = { sub: String(user.id), email: user.email, iat: now, exp: now + TOKEN_TTL_SECONDS };
   return sign(payload, env.JWT_SECRET, 'HS256');
@@ -48,35 +60,38 @@ type SendResult = { ok: true; message: string } | { ok: false; status: 429 | 502
 // 邮箱验证码签发：登录 / 注册 / 找回密码三种用途各自独立（记录与冷却键互不干扰）
 async function sendCode(c: Context<{ Bindings: Env }>, email: string, purpose: CodePurpose): Promise<SendResult> {
   const env = c.env;
-  const cooldownKey = `code:cd:${purpose}:${email}`;
-  if (await env.KV.get(cooldownKey)) {
-    return { ok: false, status: 429, error: '发送过于频繁，请 1 分钟后再试' };
-  }
   const ip =
     c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() || 'unknown';
-  const ipKey = `code:ip:${ip}:${new Date().toISOString().slice(0, 10)}`;
-  const sent = Number((await env.KV.get(ipKey)) || 0);
-  if (sent >= IP_DAILY_LIMIT) {
+  const today = new Date().toISOString().slice(0, 10);
+  // 冷却（limit=1 的计数即开关）与 IP 每日上限都是 D1 原子计数，并发下不会漏判
+  const [cooldown, ipLimit] = await Promise.all([
+    bumpLimit(env, `code:cd:${purpose}:${email}`, 1, SEND_COOLDOWN),
+    bumpLimit(env, `code:ip:${ip}:${today}`, IP_DAILY_LIMIT, 86400),
+  ]);
+  if (cooldown.exceeded) {
+    return { ok: false, status: 429, error: '发送过于频繁，请 1 分钟后再试' };
+  }
+  if (ipLimit.exceeded) {
+    // 每日上限不打冷却，明日窗口自动清零
+    await clearLimit(env, `code:cd:${purpose}:${email}`).catch(() => {});
     return { ok: false, status: 429, error: '今日发送次数已达上限，请明天再试' };
   }
 
-  const record: CodeRecord = { code: randomCode(), attempts: 0, expiresAt: Date.now() + CODE_TTL * 1000 };
+  const record: CodeRecord = { code: randomCode(), expiresAt: Date.now() + CODE_TTL * 1000 };
+  // 先落码再发信：发送失败时验证码保留至自然过期（本地测试也依赖可从 KV 读码）
   await env.KV.put(`code:${purpose}:${email}`, JSON.stringify(record), { expirationTtl: CODE_TTL });
-  await env.KV.put(cooldownKey, '1', { expirationTtl: SEND_COOLDOWN });
-  await env.KV.put(ipKey, String(sent + 1), { expirationTtl: 86400 });
-
   try {
     await sendCodeEmail(env, email, record.code, purpose);
   } catch (e) {
     console.error(`send ${purpose} email failed`, e);
-    // 发送失败仅释放冷却让用户可立即重试；验证码保留至自然过期
-    await env.KV.delete(cooldownKey).catch(() => {});
+    // 发送失败仅释放冷却让用户可立即重试
+    await clearLimit(env, `code:cd:${purpose}:${email}`).catch(() => {});
     return { ok: false, status: 502, error: '验证码邮件发送失败，请稍后重试' };
   }
   return { ok: true, message: '验证码已发送，10 分钟内有效' };
 }
 
-// 校验并消费验证码：错误累计次数，超过上限作废；正确则一次性删除
+// 校验并消费验证码：错误次数超过上限即作废；正确则一次性删除
 async function consumeCode(env: Env, email: string, purpose: CodePurpose, code: string): Promise<boolean> {
   const key = `code:${purpose}:${email}`;
   const raw = await env.KV.get(key);
@@ -87,23 +102,25 @@ async function consumeCode(env: Env, email: string, purpose: CodePurpose, code: 
   } catch {
     return false;
   }
-  if (record.attempts >= MAX_ATTEMPTS) {
-    await env.KV.delete(key);
-    return false;
+  if (codeEqual(record.code, code)) {
+    await Promise.all([env.KV.delete(key), clearLimit(env, `codeatt:${purpose}:${email}`)]);
+    return true;
   }
-  if (record.code !== code) {
-    const ttl = Math.max(1, Math.floor((record.expiresAt - Date.now()) / 1000));
-    await env.KV.put(key, JSON.stringify({ ...record, attempts: record.attempts + 1 }), { expirationTtl: ttl });
-    return false;
-  }
-  await env.KV.delete(key);
-  return true;
+  // 错误尝试计数走 D1 原子自增；超过上限作废验证码
+  const ttl = Math.max(1, Math.floor((record.expiresAt - Date.now()) / 1000));
+  const r = await bumpLimit(env, `codeatt:${purpose}:${email}`, MAX_ATTEMPTS, ttl);
+  if (r.exceeded) await env.KV.delete(key);
+  return false;
 }
 
 async function ensureUser(env: Env, email: string): Promise<UserInfo> {
-  await env.DB.prepare('INSERT INTO users (email, email_verified) VALUES (?, 1) ON CONFLICT(email) DO NOTHING')
+  // 命中即返回新用户 id，免去插入后的第二次查询；冲突（已存在）时再走 SELECT
+  const inserted = await env.DB.prepare(
+    'INSERT INTO users (email, email_verified) VALUES (?, 1) ON CONFLICT(email) DO NOTHING RETURNING id',
+  )
     .bind(email)
-    .run();
+    .first<{ id: number }>();
+  if (inserted) return { id: inserted.id, email };
   const user = await env.DB.prepare('SELECT id, email FROM users WHERE email = ?')
     .bind(email)
     .first<UserInfo>();
@@ -144,10 +161,13 @@ authRoutes.post('/register/request-code', async (c) => {
   const body = await c.req.json().catch(() => ({}));
   const email = normalizeEmail(body.email);
   if (!email) return c.json({ error: '请输入正确的邮箱地址' }, 400);
+  // 对已注册邮箱不发信也不报 409，与找回密码流程保持一致，避免泄露邮箱是否已注册
   const exists = await c.env.DB.prepare('SELECT 1 FROM users WHERE email = ?').bind(email).first();
-  if (exists) return c.json({ error: '该邮箱已注册，请直接登录或找回密码' }, 409);
-  const r = await sendCode(c, email, 'register');
-  return r.ok ? c.json(r) : c.json({ error: r.error }, r.status);
+  if (!exists) {
+    const r = await sendCode(c, email, 'register');
+    if (!r.ok) return c.json({ error: r.error }, r.status);
+  }
+  return c.json({ ok: true, message: '如果该邮箱未注册，注册验证码已发送，10 分钟内有效' });
 });
 
 authRoutes.post('/register', async (c) => {
@@ -163,7 +183,10 @@ authRoutes.post('/register', async (c) => {
     return c.json({ error: '验证码不正确或已过期' }, 400);
   }
   const passwordHash = await hashPassword(body.password as string);
-  const ins = await c.env.DB.prepare('INSERT INTO users (email, password_hash, email_verified) VALUES (?, ?, 1)')
+  // password_changed_at：密码吊销锚点，早于它签发的 JWT 全部失效
+  const ins = await c.env.DB.prepare(
+    "INSERT INTO users (email, password_hash, email_verified, password_changed_at) VALUES (?, ?, 1, strftime('%s','now'))",
+  )
     .bind(email, passwordHash)
     .run();
   if (!ins.meta.changes) return c.json({ error: '该邮箱已注册，请直接登录' }, 409);
@@ -187,21 +210,19 @@ authRoutes.post('/login', async (c) => {
   }
 
   const failKey = `pw:fail:${email}`;
-  const failsRaw = await c.env.KV.get(failKey);
-  const fails = failsRaw ? (JSON.parse(failsRaw) as { count: number }) : { count: 0 };
-  if (fails.count >= LOGIN_FAIL_LIMIT) {
+  // 只读预检提前短路（省掉密码哈希的 CPU）；权威判定在失败后的原子自增里
+  if ((await peekLimit(c.env, failKey, LOGIN_FAIL_LIMIT)).exceeded) {
     return c.json({ error: '失败次数过多，请 15 分钟后再试，或改用验证码登录' }, 429);
   }
 
   if (!(await verifyPassword(password, user.password_hash))) {
-    const count = fails.count + 1;
-    await c.env.KV.put(failKey, JSON.stringify({ count }), { expirationTtl: LOGIN_FAIL_TTL });
+    const fails = await bumpLimit(c.env, failKey, LOGIN_FAIL_LIMIT, LOGIN_FAIL_TTL);
     return c.json(
-      { error: count >= LOGIN_FAIL_LIMIT ? '失败次数过多，请 15 分钟后再试，或改用验证码登录' : '邮箱或密码不正确' },
+      { error: fails.count >= LOGIN_FAIL_LIMIT ? '失败次数过多，请 15 分钟后再试，或改用验证码登录' : '邮箱或密码不正确' },
       401,
     );
   }
-  await c.env.KV.delete(failKey);
+  await clearLimit(c.env, failKey);
   const token = await issueToken(c.env, { id: user.id, email: user.email });
   return c.json({ ok: true, token, email: user.email });
 });
@@ -236,9 +257,13 @@ authRoutes.post('/reset-password', async (c) => {
   const user = await c.env.DB.prepare('SELECT id, email FROM users WHERE email = ?')
     .bind(email)
     .first<UserInfo>();
-  if (!user) return c.json({ error: '账号不存在' }, 400);
+  // 正常流程下消费验证码已保证账号存在；行缺失（注册后被删）与码错共用同一提示
+  if (!user) return c.json({ error: '验证码不正确或已过期' }, 400);
   const passwordHash = await hashPassword(body.new_password as string);
-  await c.env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?').bind(passwordHash, user.id).run();
+  // 重置密码吊销所有旧令牌（包括盗取者手里的），并给当前用户签发新令牌
+  await c.env.DB.prepare("UPDATE users SET password_hash = ?, password_changed_at = strftime('%s','now') WHERE id = ?")
+    .bind(passwordHash, user.id)
+    .run();
   const token = await issueToken(c.env, user);
   return c.json({ ok: true, token, email: user.email });
 });
@@ -265,43 +290,45 @@ authRoutes.post('/change-password', requireAuth, async (c) => {
     if (!oldPassword) return c.json({ error: '请输入当前密码' }, 400);
     // 防爆破：同账号连续验证旧密码失败即锁定（与密码登录同一策略）
     const failKey = `pwchg:fail:${c.get('userId')}`;
-    const failsRaw = await c.env.KV.get(failKey);
-    const fails = failsRaw ? (JSON.parse(failsRaw) as { count: number }) : { count: 0 };
-    if (fails.count >= CHANGE_FAIL_LIMIT) {
+    if ((await peekLimit(c.env, failKey, CHANGE_FAIL_LIMIT)).exceeded) {
       return c.json({ error: '尝试次数过多，请 15 分钟后再试' }, 429);
     }
     if (!(await verifyPassword(oldPassword, storedHash))) {
-      const count = fails.count + 1;
-      await c.env.KV.put(failKey, JSON.stringify({ count }), { expirationTtl: CHANGE_FAIL_TTL });
+      const fails = await bumpLimit(c.env, failKey, CHANGE_FAIL_LIMIT, CHANGE_FAIL_TTL);
       return c.json(
-        { error: count >= CHANGE_FAIL_LIMIT ? '尝试次数过多，请 15 分钟后再试' : '当前密码不正确' },
-        count >= CHANGE_FAIL_LIMIT ? 429 : 400,
+        { error: fails.count >= CHANGE_FAIL_LIMIT ? '尝试次数过多，请 15 分钟后再试' : '当前密码不正确' },
+        fails.count >= CHANGE_FAIL_LIMIT ? 429 : 400,
       );
     }
-    await c.env.KV.delete(failKey).catch(() => {});
+    await clearLimit(c.env, failKey).catch(() => {});
   }
 
   const passwordHash = await hashPassword(body.new_password as string);
-  await c.env.DB.prepare('UPDATE users SET password_hash = ? WHERE id = ?')
+  // 吊销包括当前令牌在内的全部旧令牌，同时签发新令牌让当前会话保持登录
+  await c.env.DB.prepare("UPDATE users SET password_hash = ?, password_changed_at = strftime('%s','now') WHERE id = ?")
     .bind(passwordHash, user.id)
     .run();
-  return c.json({ ok: true, message: hadPassword ? '密码已修改' : '密码已设置' });
+  const token = await issueToken(c.env, { id: user.id, email: c.get('email') });
+  return c.json({ ok: true, message: hadPassword ? '密码已修改' : '密码已设置', token });
 });
 
 // ---- 当前用户 ----
 
 authRoutes.get('/me', requireAuth, async (c) => {
   const userId = c.get('userId');
-  const user = await c.env.DB.prepare('SELECT id, email, created_at, password_hash FROM users WHERE id = ?')
-    .bind(userId)
-    .first<{ id: number; email: string; created_at: string; password_hash: string | null }>();
-  const counts = await c.env.DB.prepare(
-    `SELECT
-       (SELECT COUNT(*) FROM links WHERE user_id = ?1 AND type = 'site') AS siteCount,
-       (SELECT COUNT(*) FROM links WHERE user_id = ?1 AND type = 'article') AS articleCount`,
-  )
-    .bind(userId)
-    .first<{ siteCount: number; articleCount: number }>();
+  // 用户信息与两类计数互不依赖，并行查询
+  const [user, counts] = await Promise.all([
+    c.env.DB.prepare('SELECT id, email, created_at, password_hash FROM users WHERE id = ?')
+      .bind(userId)
+      .first<{ id: number; email: string; created_at: string; password_hash: string | null }>(),
+    c.env.DB.prepare(
+      `SELECT
+         (SELECT COUNT(*) FROM links WHERE user_id = ?1 AND type = 'site') AS siteCount,
+         (SELECT COUNT(*) FROM links WHERE user_id = ?1 AND type = 'article') AS articleCount`,
+    )
+      .bind(userId)
+      .first<{ siteCount: number; articleCount: number }>(),
+  ]);
   return c.json({
     ok: true,
     userId,

@@ -19,6 +19,14 @@ export const requireAuth = createMiddleware<{ Bindings: Env; Variables: { userId
     if (!Number.isInteger(userId) || userId <= 0) {
       return c.json({ error: '登录已过期，请重新登录' }, 401);
     }
+    // 吊销检查：修改 / 重置密码后，早于 password_changed_at 签发的令牌一律失效。
+    // 用户行不存在时放行（与 /me 的容错一致）；无密码账号该列为 NULL，永不拒绝。
+    const row = await c.env.DB.prepare('SELECT password_changed_at FROM users WHERE id = ?')
+      .bind(userId)
+      .first<{ password_changed_at: number | null }>();
+    if (row && typeof row.password_changed_at === 'number' && payload.iat < row.password_changed_at) {
+      return c.json({ error: '登录已过期，请重新登录' }, 401);
+    }
     c.set('userId', userId);
     c.set('email', String(payload.email || ''));
     await next();

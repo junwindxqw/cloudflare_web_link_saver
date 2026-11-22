@@ -1,7 +1,11 @@
 // 密码哈希：PBKDF2-HMAC-SHA256（WebCrypto，Workers 原生支持，无第三方依赖）
-// 存储格式：pbkdf2$<iterations>$<salt_b64>$<hash_b64>，迭代次数随记录保存，可整体升级
+// 存储格式：pbkdf2$<iterations>$<salt_b64>$<hash_b64>，迭代次数随记录保存，可整体升级。
+// 注：OWASP 2023 建议 SHA-256 用 60 万次迭代，但 Workers 免费档有单请求 CPU 限额，
+// 实测 10 万次已接近上限，故维持 10 万；升级需要先切换到付费档再改这里的常量。
 
 const PBKDF2_ITERATIONS = 100000;
+// 校验时拒绝低于该下限的历史记录，防止有 DB 写权限的攻击者把迭代次数改小（降级攻击）
+const MIN_ITERATIONS = 10000;
 
 export function validatePassword(pw: unknown): string | null {
   if (typeof pw !== 'string' || !pw) return '请输入密码';
@@ -45,7 +49,7 @@ export async function verifyPassword(password: string, stored: string): Promise<
   const parts = stored.split('$');
   if (parts.length !== 4 || parts[0] !== 'pbkdf2') return false;
   const iterations = Number(parts[1]);
-  if (!Number.isInteger(iterations) || iterations < 1) return false;
+  if (!Number.isInteger(iterations) || iterations < MIN_ITERATIONS) return false;
   try {
     const hash = await derive(password, fromB64(parts[2]), iterations);
     return timingSafeEqual(hash, fromB64(parts[3]));

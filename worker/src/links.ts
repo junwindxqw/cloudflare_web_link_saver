@@ -3,6 +3,7 @@ import type { Env } from './types';
 import { ARTICLE_CATEGORY } from './types';
 import { requireAuth } from './middleware';
 import { assertPublicHttpUrl, classifyUrl, fallbackTitle, fetchPageTitle } from './url';
+import { monthRange } from './month';
 import { autoTag } from './classify';
 
 export const linkRoutes = new Hono<{ Bindings: Env; Variables: { userId: number; email: string } }>();
@@ -13,7 +14,7 @@ linkRoutes.post('/', async (c) => {
   const rawUrl = typeof body.url === 'string' ? body.url.trim() : '';
   if (!rawUrl) return c.json({ error: '缺少 url 参数' }, 400);
 
-  let u;
+  let u: URL;
   try {
     u = assertPublicHttpUrl(rawUrl);
   } catch (e) {
@@ -57,35 +58,35 @@ linkRoutes.post('/', async (c) => {
        type = excluded.type,
        category = excluded.category,
        tag = CASE WHEN tag = '' THEN excluded.tag ELSE tag END,
-       created_at = datetime('now')`,
+       created_at = datetime('now')
+     RETURNING id, title`,
   ).bind(userId, cls.canonical, title, cls.domain, type, category, providedNote, tag);
 
+  // RETURNING 直接拿到落库后的行，省去 upsert 后的第二次 SELECT 回查
+  let saved: { id: number; title: string } | undefined;
   if (type === 'article') {
     // 文章页同时归档所属站点域名：若该域名尚未保存为网站则自动补一条
     const siteUpsert = c.env.DB.prepare(
       `INSERT OR IGNORE INTO links (user_id, url, title, domain, type, category) VALUES (?, ?, ?, ?, 'site', ?)`,
     ).bind(userId, u.origin + '/', cls.domain, cls.domain, cls.domain);
-    await c.env.DB.batch([upsert, siteUpsert]);
+    const [upsertRes] = await c.env.DB.batch([upsert, siteUpsert]);
+    saved = upsertRes?.results?.[0] as { id: number; title: string } | undefined;
   } else {
-    await upsert.run();
+    const res = await upsert.run();
+    saved = res.results?.[0] as { id: number; title: string } | undefined;
   }
 
-  if (backfill) {
-    const row = await c.env.DB.prepare('SELECT id, title FROM links WHERE user_id = ? AND url = ?')
-      .bind(userId, cls.canonical)
-      .first<{ id: number; title: string }>();
-    if (row) {
-      // waitUntil：响应返回后继续抓取标题，仅当该行标题未被用户改动时回填
-      c.executionCtx.waitUntil(
-        (async () => {
-          const fetched = await fetchPageTitle(cls.canonical);
-          if (!fetched || fetched === row.title) return;
-          await c.env.DB.prepare('UPDATE links SET title = ? WHERE id = ? AND title = ?')
-            .bind(fetched, row.id, row.title)
-            .run();
-        })().catch((e) => console.error('title backfill failed', e)),
-      );
-    }
+  if (backfill && saved) {
+    // waitUntil：响应返回后继续抓取标题，仅当该行标题未被用户改动时回填
+    c.executionCtx.waitUntil(
+      (async () => {
+        const fetched = await fetchPageTitle(cls.canonical);
+        if (!fetched || fetched === saved.title) return;
+        await c.env.DB.prepare('UPDATE links SET title = ? WHERE id = ? AND title = ?')
+          .bind(fetched, saved.id, saved.title)
+          .run();
+      })().catch((e) => console.error('title backfill failed', e)),
+    );
   }
 
   return c.json({
@@ -93,24 +94,28 @@ linkRoutes.post('/', async (c) => {
     type,
     category,
     domain: cls.domain,
-    title: title || existing?.title || '',
+    title: title || '',
     tag,
     existed: Boolean(existing),
   });
 });
 
 // 「一键识别」：对尚未打标签的链接跑规则分类，手动改过的标签不被覆盖
+// 单次最多处理 500 条，避免 force 全量时一次请求拖垮响应（再点一次可继续）
+const AUTOTAG_MAX_ROWS = 500;
+
 linkRoutes.post('/auto-tag', async (c) => {
   const userId = c.get('userId');
   const force = Boolean((await c.req.json().catch(() => ({})) as { force?: boolean }).force);
   const rows = await c.env.DB.prepare(
-    `SELECT id, url, domain, title, tag FROM links WHERE user_id = ?${force ? '' : " AND tag = ''"}`,
+    `SELECT id, url, domain, title, tag FROM links WHERE user_id = ?${force ? '' : " AND tag = ''"} LIMIT ${AUTOTAG_MAX_ROWS}`,
   )
     .bind(userId)
     .all<{ id: number; url: string; domain: string; title: string; tag: string }>();
 
   const byTag: Record<string, number> = {};
   let skipped = 0;
+  let tagged = 0;
   const stmts = [];
   for (const row of rows.results ?? []) {
     const tag = autoTag(row.domain, row.title, row.url);
@@ -118,7 +123,10 @@ linkRoutes.post('/auto-tag', async (c) => {
       skipped += 1;
       continue;
     }
+    // 与现有标签相同的行不产生 UPDATE（force 模式下省掉大量无效写）
+    if (tag === row.tag) continue;
     byTag[tag] = (byTag[tag] ?? 0) + 1;
+    tagged += 1;
     stmts.push(
       c.env.DB.prepare('UPDATE links SET tag = ? WHERE id = ? AND user_id = ?').bind(tag, row.id, userId),
     );
@@ -128,7 +136,7 @@ linkRoutes.post('/auto-tag', async (c) => {
     await c.env.DB.batch(stmts.slice(i, i + 50));
   }
 
-  return c.json({ ok: true, tagged: stmts.length, skipped, byTag });
+  return c.json({ ok: true, tagged, skipped, byTag, capped: (rows.results?.length ?? 0) >= AUTOTAG_MAX_ROWS });
 });
 
 linkRoutes.get('/', async (c) => {
@@ -162,8 +170,14 @@ linkRoutes.get('/', async (c) => {
     binds.push(category);
   }
   if (month) {
-    where.push("strftime('%Y-%m', created_at) = ?");
-    binds.push(month);
+    // 范围条件让 SQLite 走 created_at 索引（strftime 按行计算会全表扫）
+    const range = monthRange(month);
+    if (range) {
+      where.push('created_at >= ? AND created_at < ?');
+      binds.push(range[0], range[1]);
+    } else {
+      where.push('1 = 0'); // 非法月份参数按空集处理
+    }
   }
   if (days > 0) {
     where.push("created_at >= datetime('now', ?)");
@@ -223,7 +237,8 @@ linkRoutes.get('/overview', async (c) => {
       .bind(userId)
       .all<{ name: string; count: number }>(),
     c.env.DB.prepare(
-      `SELECT strftime('%Y-%m', created_at) AS month, COUNT(*) AS count FROM links WHERE user_id = ? AND type = 'article'
+      // substr 比 strftime 便宜，聚合分组结果一致（created_at 恒为 'YYYY-MM-DD HH:MM:SS'）
+      `SELECT substr(created_at, 1, 7) AS month, COUNT(*) AS count FROM links WHERE user_id = ? AND type = 'article'
        GROUP BY month ORDER BY month DESC LIMIT 120`,
     )
       .bind(userId)
@@ -233,13 +248,13 @@ linkRoutes.get('/overview', async (c) => {
       count: number;
     }>(),
     c.env.DB.prepare(
-      `SELECT strftime('%Y-%m', created_at) AS month, COUNT(*) AS count FROM snippets WHERE user_id = ? AND type = 'text'
+      `SELECT substr(created_at, 1, 7) AS month, COUNT(*) AS count FROM snippets WHERE user_id = ? AND type = 'text'
        GROUP BY month ORDER BY month DESC LIMIT 120`,
     )
       .bind(userId)
       .all<{ month: string; count: number }>(),
     c.env.DB.prepare(
-      `SELECT strftime('%Y-%m', created_at) AS month, COUNT(*) AS count FROM snippets WHERE user_id = ? AND type = 'image'
+      `SELECT substr(created_at, 1, 7) AS month, COUNT(*) AS count FROM snippets WHERE user_id = ? AND type = 'image'
        GROUP BY month ORDER BY month DESC LIMIT 120`,
     )
       .bind(userId)

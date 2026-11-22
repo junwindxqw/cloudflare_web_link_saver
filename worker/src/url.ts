@@ -1,5 +1,17 @@
 import { ARTICLE_CATEGORY } from './types';
 
+/** IPv4 前两段的私网/保留段判定（a.b.c.d 中只看 a、b 即可覆盖全部保留段） */
+function isPrivateIPv4Prefix(a: number, b: number): boolean {
+  if (a === 0 || a === 10 || a === 127) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  if (a === 100 && b >= 64 && b <= 127) return true;
+  if (a === 198 && (b === 18 || b === 19)) return true;
+  if (a >= 224) return true;
+  return false;
+}
+
 /**
  * 校验 hostname 是否为环回/私有/保留地址，禁止保存或抓取此类目标。
  */
@@ -12,6 +24,19 @@ export function isPrivateHost(hostname: string): boolean {
   if (h.startsWith('[')) {
     const v6 = h.slice(1, -1).split('%')[0];
     if (v6 === '::1' || v6 === '::') return true;
+    // IPv4-mapped（::ffff:7f00:1）/ 兼容（::7f00:1）形式：WHATWG 会把 [::ffff:127.0.0.1]
+    // 序列化为压缩十六进制，末两段即 IPv4。仅看首段（空串）会漏判内网地址。
+    const parts = v6.toLowerCase().split(':');
+    const mapped =
+      (parts.length === 5 && parts[0] === '' && parts[1] === '' && parts[2] === 'ffff') ||
+      (parts.length === 4 && parts[0] === '' && parts[1] === '');
+    if (mapped) {
+      const hi = parseInt((parts[3] || '').padStart(4, '0'), 16);
+      const lo = parseInt((parts[4] || '').padStart(4, '0'), 16);
+      if (Number.isFinite(hi) && Number.isFinite(lo)) {
+        return isPrivateIPv4Prefix((hi >> 8) & 255, hi & 255);
+      }
+    }
     const first = (v6.split(':')[0] || '').toLowerCase();
     return /^f[cd]/.test(first) || /^fe[89ab]/.test(first);
   }
@@ -19,14 +44,7 @@ export function isPrivateHost(hostname: string): boolean {
   if (m) {
     const octets = m.slice(1).map(Number);
     if (octets.some((n) => n > 255)) return true;
-    const [a, b] = octets;
-    if (a === 0 || a === 10 || a === 127) return true;
-    if (a === 169 && b === 254) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 100 && b >= 64 && b <= 127) return true;
-    if (a === 198 && (b === 18 || b === 19)) return true;
-    if (a >= 224) return true;
+    if (isPrivateIPv4Prefix(octets[0], octets[1])) return true;
     return false;
   }
   return false;
@@ -177,11 +195,16 @@ async function readBodyHead(res: Response, maxBytes: number): Promise<string> {
 }
 
 /**
- * 服务端尽力抓取页面 <title>。手动跟随重定向，每一跳都重新校验目标地址。
+ * 请求公网 http/https 资源的统一入口：手动跟随重定向，每一跳都重新校验目标地址
+ * （防重定向绕过 SSRF 校验）。返回最终的非重定向响应；校验失败 / 网络错误 / 超过跳数
+ * 上限返回 null。抓取页面标题与转存远程图片共用此逻辑，避免两处校验口径漂移。
  */
-export async function fetchPageTitle(url: string): Promise<string | null> {
-  let current = url;
-  for (let i = 0; i < 3; i++) {
+export async function fetchPublicUrl(
+  rawUrl: string,
+  opts: { headers?: Record<string, string>; timeoutMs: number; maxHops?: number },
+): Promise<Response | null> {
+  let current = rawUrl;
+  for (let hop = 0; hop < (opts.maxHops ?? 3); hop++) {
     let u: URL;
     try {
       u = assertPublicHttpUrl(current);
@@ -192,8 +215,8 @@ export async function fetchPageTitle(url: string): Promise<string | null> {
     try {
       res = await fetch(u, {
         redirect: 'manual',
-        signal: AbortSignal.timeout(5000),
-        headers: { 'user-agent': 'Mozilla/5.0 (compatible; LinkSaver/1.0)' },
+        signal: AbortSignal.timeout(opts.timeoutMs),
+        headers: opts.headers,
       });
     } catch {
       return null;
@@ -208,22 +231,33 @@ export async function fetchPageTitle(url: string): Promise<string | null> {
       }
       continue;
     }
-    if (!res.ok) return null;
-    const ct = res.headers.get('content-type') || '';
-    if (!ct.includes('html') && !ct.includes('text')) return null;
-    let text: string;
-    try {
-      // 读响应体同样受 AbortSignal 超时约束，可能抛出 TimeoutError
-      text = await readBodyHead(res, 256 * 1024);
-    } catch {
-      return null;
-    }
-    const m = text.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-    if (!m) return null;
-    const title = decodeEntities(m[1]).replace(/\s+/g, ' ').trim().slice(0, 300);
-    return title || null;
+    return res;
   }
   return null;
+}
+
+/**
+ * 服务端尽力抓取页面 <title>。
+ */
+export async function fetchPageTitle(url: string): Promise<string | null> {
+  const res = await fetchPublicUrl(url, {
+    timeoutMs: 5000,
+    headers: { 'user-agent': 'Mozilla/5.0 (compatible; LinkSaver/1.0)' },
+  });
+  if (!res || !res.ok) return null;
+  const ct = res.headers.get('content-type') || '';
+  if (!ct.includes('html') && !ct.includes('text')) return null;
+  let text: string;
+  try {
+    // 读响应体同样受 AbortSignal 超时约束，可能抛出 TimeoutError
+    text = await readBodyHead(res, 256 * 1024);
+  } catch {
+    return null;
+  }
+  const m = text.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+  if (!m) return null;
+  const title = decodeEntities(m[1]).replace(/\s+/g, ' ').trim().slice(0, 300);
+  return title || null;
 }
 
 export function fallbackTitle(u: URL): string {

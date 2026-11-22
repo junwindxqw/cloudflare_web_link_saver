@@ -7,6 +7,10 @@ export type Env = {
   RESEND_API_KEY: string;
   WEB_ORIGIN: string;
   MAIL_FROM: string;
+  // 允许跨域访问 API 的扩展来源（wrangler.jsonc vars 配置）
+  EXTENSION_ORIGIN: string;
+  // 仅本地开发放开 localhost 来源（.dev.vars 里设 ALLOW_LOCAL_ORIGIN=true），生产不设
+  ALLOW_LOCAL_ORIGIN?: string;
 };
 
 export type UserPayload = {
