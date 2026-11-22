@@ -9,7 +9,8 @@ chrome.runtime.onInstalled.addListener(() => {
     chrome.contextMenus.create({
       id: MENU_SAVE,
       title: 'Send to Link Saver',
-      contexts: ['page', 'link', 'selection', 'image'],
+      // frame：iframe 内右键也能保存
+      contexts: ['page', 'frame', 'link', 'selection', 'image'],
     });
   });
 });
@@ -34,13 +35,14 @@ function notify(message) {
   });
 }
 
-// 带 token 的保存请求：登录态 / 网络错误统一反馈，失败返回 null
+// 带 token 的保存请求：登录态 / 网络错误统一反馈
+// 成功返回 { ok: true, data }，失败返回 { ok: false, message }——弹窗需要真实的保存结果
 async function postAuthJson(path, payload) {
   const token = await getAuth();
   if (!token) {
     flashBadge('!', '#dc2626');
     notify('请先在工具栏 Link Saver 图标中登录');
-    return null;
+    return { ok: false, message: '请先在工具栏 Link Saver 图标中登录' };
   }
   try {
     const res = await fetch(`${API_BASE}${path}`, {
@@ -53,14 +55,14 @@ async function postAuthJson(path, payload) {
       await chrome.storage.local.remove('token');
       flashBadge('!', '#dc2626');
       notify('登录已过期，请重新登录');
-      return null;
+      return { ok: false, message: '登录已过期，请重新登录' };
     }
     if (!res.ok) throw new Error(data.error || `保存失败(${res.status})`);
-    return data;
+    return { ok: true, data };
   } catch (e) {
     flashBadge('!', '#dc2626');
     notify(e.message || '保存失败，请检查网络');
-    return null;
+    return { ok: false, message: e.message || '保存失败，请检查网络' };
   }
 }
 
@@ -68,12 +70,13 @@ async function saveUrl(url, title, note = '') {
   if (!url || !/^https?:\/\//i.test(url)) {
     flashBadge('!', '#dc2626');
     notify('仅支持保存 http/https 网址');
-    return;
+    return { ok: false, message: '仅支持保存 http/https 网址' };
   }
-  const data = await postAuthJson('/api/links', { url, title: title || '', note: note || '' });
-  if (!data) return;
+  const r = await postAuthJson('/api/links', { url, title: title || '', note: note || '' });
+  if (!r.ok) return r;
   flashBadge('✓', '#16a34a');
-  notify(data.existed ? `已更新收藏（${data.category}）` : `已保存到「${data.category}」`);
+  notify(r.data.existed ? `已更新收藏（${r.data.category}）` : `已保存到「${r.data.category}」`);
+  return { ok: true, message: r.data.existed ? '已更新收藏' : '已保存' };
 }
 
 async function saveSelection(text, pageUrl, pageTitle) {
@@ -81,34 +84,36 @@ async function saveSelection(text, pageUrl, pageTitle) {
   if (!content) {
     flashBadge('!', '#dc2626');
     notify('没有可保存的选中文本');
-    return;
+    return { ok: false, message: '没有可保存的选中文本' };
   }
-  const data = await postAuthJson('/api/snippets', {
+  const r = await postAuthJson('/api/snippets', {
     type: 'text',
     content: content.slice(0, MAX_TEXT_CHARS),
     source_url: pageUrl || '',
     source_title: pageTitle || '',
   });
-  if (!data) return;
+  if (!r.ok) return r;
   flashBadge('✓', '#16a34a');
   notify(`已保存短文本（${Math.min(content.length, MAX_TEXT_CHARS)} 字）`);
+  return { ok: true, message: '已保存短文本' };
 }
 
 async function saveImage(srcUrl, pageUrl, pageTitle) {
   if (!srcUrl || /^(blob|file):/i.test(srcUrl)) {
     flashBadge('!', '#dc2626');
     notify('不支持保存该类型的图片地址');
-    return;
+    return { ok: false, message: '不支持保存该类型的图片地址' };
   }
-  const data = await postAuthJson('/api/snippets', {
+  const r = await postAuthJson('/api/snippets', {
     type: 'image',
     content: srcUrl,
     source_url: pageUrl || '',
     source_title: pageTitle || '',
   });
-  if (!data) return;
+  if (!r.ok) return r;
   flashBadge('✓', '#16a34a');
-  notify(data.stored ? '图片已转存到服务端' : '已保存图片链接（转存失败，保留原始地址）');
+  notify(r.data.stored ? '图片已转存到服务端' : '已保存图片链接（转存失败，保留原始地址）');
+  return { ok: true, message: r.data.stored ? '图片已转存' : '已保存图片链接' };
 }
 
 chrome.contextMenus.onClicked.addListener(async (info, tab) => {
@@ -145,10 +150,12 @@ chrome.contextMenus.onClicked.addListener(async (info, tab) => {
   await saveUrl(url, title);
 });
 
-// 弹窗请求：直接复用保存逻辑与角标反馈
+// 弹窗请求：直接复用保存逻辑与角标反馈；回传真实保存结果，弹窗据此提示成败
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg?.type === 'SAVE_URL') {
-    saveUrl(msg.url, msg.title, msg.note || '').finally(() => sendResponse({ ok: true }));
+    saveUrl(msg.url, msg.title, msg.note || '')
+      .then((r) => sendResponse(r || { ok: false, message: '保存失败' }))
+      .catch(() => sendResponse({ ok: false, message: '保存失败，请重试' }));
     return true;
   }
   return undefined;

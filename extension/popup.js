@@ -128,14 +128,23 @@ async function saveCurrentPage() {
   const btn = $('btn-save');
   btn.disabled = true;
   btn.textContent = '保存中…';
-  // 保存逻辑与角标反馈在 background.js 中统一处理
-  await chrome.runtime.sendMessage({ type: 'SAVE_URL', url: tab.url, title: tab.title || '', note: $('note').value.trim() });
-  setTimeout(() => {
-    btn.disabled = false;
-    btn.textContent = '保存当前页面';
+  // 等待真实保存结果（background.js 回传 {ok, message}）：
+  // 成功短暂提示后关窗；失败保留弹窗与备注，方便修改后重试
+  let result = null;
+  try {
+    result = await chrome.runtime.sendMessage({ type: 'SAVE_URL', url: tab.url, title: tab.title || '', note: $('note').value.trim() });
+  } catch {
+    result = null;
+  }
+  btn.disabled = false;
+  btn.textContent = '保存当前页面';
+  if (result && result.ok) {
+    setMsg(result.message || '已保存', true);
     $('note').value = '';
-    window.close();
-  }, 600);
+    setTimeout(() => window.close(), 700);
+  } else {
+    setMsg((result && result.message) || '保存失败，请重试');
+  }
 }
 
 // 打开 Web 端：插件已登录时先签发一次性令牌带上（网页端立即自动登录），否则普通打开
